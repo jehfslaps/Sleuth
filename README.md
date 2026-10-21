@@ -22,9 +22,11 @@ Cream paper, oxblood ink and candy-colored stickers. Each kind of place keeps on
 
 ## Download
 
-Go to **Releases → latest** on this repo and download `SpaceSleuth.exe`. That's the whole app (well under 1 MB, nothing to install).
+Go to **Releases → latest** on this repo and download **`SpaceSleuth-Setup.exe`**. Run it to install Space Sleuth like any other program: it adds a Start menu shortcut (and a desktop icon if you want one), and you can uninstall it any time from **Settings → Apps**.
 
-The first time you run it, Windows SmartScreen may say *"Windows protected your PC"* because the app isn't code-signed. Click **More info → Run anyway**. It then asks for administrator rights, which it needs to read Windows' change log and restore-point info.
+Prefer no install? `SpaceSleuth.exe` on the same page is the whole app in one file (well under 1 MB). Just run it.
+
+The first time, Windows SmartScreen may say *"Windows protected your PC"* because the app isn't code-signed. Click **More info → Run anyway**. Space Sleuth asks for administrator rights, which it needs to read Windows' change log and restore-point info.
 
 ## How it works
 
@@ -41,7 +43,7 @@ Space Sleuth only reads. It never deletes or changes anything.
 
 ## Building
 
-GitHub Actions builds `SpaceSleuth.exe` on every push to `main` and publishes it as the `latest` release. To build locally on Windows with the .NET SDK installed:
+GitHub Actions builds `SpaceSleuth.exe` and the installer `SpaceSleuth-Setup.exe` (made with [Inno Setup](https://jrsoftware.org/isinfo.php) from `installer/SpaceSleuth.iss`) on every push to `main`, and publishes both as the `latest` release. To build locally on Windows with the .NET SDK installed:
 
 ```
 dotnet build src/SpaceSleuth/SpaceSleuth.csproj -c Release -o out
