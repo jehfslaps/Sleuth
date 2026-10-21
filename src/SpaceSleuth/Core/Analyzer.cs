@@ -14,7 +14,7 @@ namespace SpaceSleuth.Core
         /// <summary>Smallest amount worth its own line.</summary>
         public long MinBytes = 20L * 1024 * 1024;
         /// <summary>Also require at least this share of the total before something gets its own line.</summary>
-        public double MinShare = 0.003;
+        public double MinShare = 0.001;
         /// <summary>A child folder is "significant" when it holds at least this share of its parent's growth.</summary>
         public double SignificantChildShare = 0.15;
         public int MaxFilesPerCulprit = 500;
@@ -100,7 +100,7 @@ namespace SpaceSleuth.Core
                 // a new sample library). Report it as one item instead of breaking it apart.
                 if (node.IsNewDir && !container)
                 {
-                    result.Add(Emit(node, null, opt, score));
+                    result.Add(Emit(node, null, opt, null));
                     return;
                 }
 
@@ -112,28 +112,41 @@ namespace SpaceSleuth.Core
                 if (big.Count > 0 && (container || bigSum >= 0.5 * s))
                 {
                     foreach (var b in big) process(b);
-                    var bigSet = new HashSet<Node>(big);
-                    double rest = s - bigSum;
+                    var exclude = new HashSet<Node>(big);
+                    if (container)
+                    {
+                        // Small unrelated things inside a busy folder (e.g. 80 apps in AppData\Local each logging
+                        // a few MB) are not one culprit; they belong with the scattered changes.
+                        foreach (var k in kids)
+                            if (exclude.Add(k)) scattered.Add(k);
+                    }
+                    double rest = s - exclude.Sum(score);
                     if (node != root && rest >= threshold)
                     {
-                        result.Add(Emit(node, bigSet, opt, score));
+                        result.Add(Emit(node, exclude, opt, "New files in this folder itself (its bigger subfolders are listed separately)"));
                     }
                     else
                     {
-                        foreach (var k in kids) if (!bigSet.Contains(k)) scattered.Add(k);
-                        if (node.Files.Count > 0) scattered.Add(new Node { Path = node.Path, Files = node.Files, Added = node.Files.Sum(f => f.AddedBytes), Possible = node.Files.Sum(f => f.PossibleBytes) });
+                        foreach (var k in kids) if (!exclude.Contains(k)) scattered.Add(k);
+                        if (node.Files.Count > 0) scattered.Add(DirectFilesOf(node));
                     }
                     return;
                 }
 
-                if (node == root)
+                if (container)
                 {
+                    // Nothing inside stands out on its own.
                     foreach (var k in kids) scattered.Add(k);
+                    double direct = s - kids.Sum(score);
+                    if (node != root && direct >= threshold)
+                        result.Add(Emit(node, new HashSet<Node>(kids), opt, "New files directly in this folder"));
+                    else if (node.Files.Count > 0)
+                        scattered.Add(DirectFilesOf(node));
                     return;
                 }
 
                 // Growth is spread across this folder's contents with no single dominant subfolder: this is the spot.
-                result.Add(Emit(node, null, opt, score));
+                result.Add(Emit(node, null, opt, null));
             };
             process(root);
 
@@ -209,7 +222,18 @@ namespace SpaceSleuth.Core
             }
         }
 
-        static Culprit Emit(Node node, HashSet<Node> exclude, AnalyzerOptions opt, Func<Node, double> score)
+        static Node DirectFilesOf(Node node)
+        {
+            return new Node
+            {
+                Path = node.Path,
+                Files = node.Files,
+                Added = node.Files.Sum(f => f.AddedBytes),
+                Possible = node.Files.Sum(f => f.PossibleBytes)
+            };
+        }
+
+        static Culprit Emit(Node node, HashSet<Node> exclude, AnalyzerOptions opt, string note)
         {
             var files = new List<ChangedFile>();
             Collect(node, exclude, files);
@@ -220,9 +244,15 @@ namespace SpaceSleuth.Core
             c.IsRemainder = exclude != null && exclude.Count > 0;
             c.Label = Labeler.Describe(node.Path);
             c.HiddenReason = Labeler.HiddenReasonFromPath(node.Path);
-            if (c.IsNewFolder) c.Note = "New folder created " + Format.When(c.FirstUtc);
-            else if (c.IsRemainder) c.Note = "Other new files in this folder (its bigger subfolders are listed separately)";
-            if (c.IsNewFolder) c.Confidence = "High";
+            if (c.IsNewFolder)
+            {
+                c.Note = "New folder created " + Format.When(c.FirstUtc);
+                if (c.AddedBytes > 0) c.Confidence = "High";
+            }
+            else
+            {
+                c.Note = note;
+            }
             return c;
         }
 

@@ -91,7 +91,12 @@ namespace SpaceSleuth.UI
             Shown += (s, e) =>
             {
                 split.SplitterDistance = Math.Max(S(200), (int)(split.Height * 0.58));
+#if PREVIEW
+                result = PreviewData.Build();
+                ShowResult();
+#else
                 StartScan();
+#endif
             };
             FormClosing += (s, e) => { if (cts != null) cts.Cancel(); };
         }
@@ -127,7 +132,7 @@ namespace SpaceSleuth.UI
 
             var l2 = MakeLabel("on");
             driveBox.DropDownStyle = ComboBoxStyle.DropDownList;
-            driveBox.Width = S(300);
+            driveBox.Width = S(260);
             driveBox.Margin = new Padding(S(4), S(3), S(10), S(3));
             driveBox.Items.Add("All drives");
             try
@@ -160,7 +165,11 @@ namespace SpaceSleuth.UI
             filterBox.Width = S(220);
             filterBox.Margin = new Padding(S(4), S(3), S(4), S(3));
             filterBox.TextChanged += (s, e) => FillCulprits();
-            filterBox.HandleCreated += (s, e) => SendMessage(filterBox.Handle, 0x1501 /* EM_SETCUEBANNER */, (IntPtr)1, "Filter results…");
+            filterBox.HandleCreated += (s, e) =>
+            {
+                try { SendMessage(filterBox.Handle, 0x1501 /* EM_SETCUEBANNER */, (IntPtr)1, "Filter results…"); }
+                catch { /* placeholder text is cosmetic */ }
+            };
 
             toolbar.Controls.AddRange(new Control[] { l1, windowBox, l2, driveBox, thoroughBox, scanButton, filterBox });
         }
@@ -223,7 +232,7 @@ namespace SpaceSleuth.UI
             culpritList.Groups.Add(rankedGroup);
             culpritList.Groups.Add(areaGroup);
             culpritList.Columns.Add("#", S(36));
-            culpritList.Columns.Add("Likelihood", S(80), HorizontalAlignment.Right);
+            culpritList.Columns.Add("Likelihood", S(90), HorizontalAlignment.Right);
             culpritList.Columns.Add("Space added", S(150), HorizontalAlignment.Right);
             culpritList.Columns.Add("Where", S(420));
             culpritList.Columns.Add("What it probably is", S(260));

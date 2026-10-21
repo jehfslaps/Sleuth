@@ -40,6 +40,7 @@ static class Tests
         AppDataScenario();
         UnknownGrowthScenario();
         SystemAreaScenario();
+        NoiseScenario();
         LabelerChecks();
         FormatChecks();
         Console.WriteLine(failures == 0 ? "All tests passed." : failures + " test(s) failed.");
@@ -131,6 +132,22 @@ static class Tests
         Print(r);
         Check(r[0].Kind == CulpritKind.SystemArea && r[0].AddedBytes == 8 * GB, "restore points rank #1");
         Check(r.Count == 2, "unchanged hibernation file is not listed as a culprit");
+    }
+
+    static void NoiseScenario()
+    {
+        Console.WriteLine("Scenario: 50 GB total, a 100 MB install, and 80 apps each logging 3 MB in AppData\\Local");
+        var files = new List<ChangedFile>();
+        for (int i = 0; i < 50; i++) files.Add(New(@"E:\Libraries\Big Brass\Samples\b" + i + ".wav", 1 * GB));
+        for (int i = 0; i < 10; i++) files.Add(New(@"C:\Program Files\CoolSynth\lib" + i + ".dll", 10 * MB, 20));
+        for (int i = 0; i < 80; i++) files.Add(New(@"C:\Users\me\AppData\Local\App" + i + @"\log.txt", 3 * MB, 9));
+        files.Add(New(@"C:\Users\me\Downloads\song.mp3", 30 * MB));
+        var r = Analyzer.Analyze(files, new[] { @"E:\Libraries\Big Brass", @"C:\Program Files\CoolSynth" }, null, new AnalyzerOptions());
+        Print(r);
+        Check(r[0].Path == @"E:\Libraries\Big Brass", "the 50 GB library is #1");
+        Check(r.Any(c => c.Path == @"C:\Program Files\CoolSynth"), "the 100 MB install is still listed further down");
+        Check(!r.Any(c => c.Path == @"C:\Users\me\AppData\Local"), "AppData\\Local is not reported as one big culprit");
+        Check(r.Last().Kind == CulpritKind.Scattered && r.Last().AddedBytes >= 240 * MB, "the 80 small app logs end up in 'small changes'");
     }
 
     static void LabelerChecks()
