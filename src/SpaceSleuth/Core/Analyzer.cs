@@ -1,0 +1,249 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace SpaceSleuth.Core
+{
+    public sealed class AnalyzerOptions
+    {
+        /// <summary>
+        /// How much an existing file that grew (earlier size unknown) counts toward ranking, per byte of its current size.
+        /// Kept low so a big file that was merely modified doesn't outrank folders we know are brand new.
+        /// </summary>
+        public double UnknownGrowthWeight = 0.05;
+        /// <summary>Smallest amount worth its own line.</summary>
+        public long MinBytes = 20L * 1024 * 1024;
+        /// <summary>Also require at least this share of the total before something gets its own line.</summary>
+        public double MinShare = 0.003;
+        /// <summary>A child folder is "significant" when it holds at least this share of its parent's growth.</summary>
+        public double SignificantChildShare = 0.15;
+        public int MaxFilesPerCulprit = 500;
+        public int MaxCulprits = 200;
+    }
+
+    /// <summary>
+    /// Builds a folder tree from every file that grew, then finds the folders that best explain the growth
+    /// and ranks them from most likely to least likely.
+    /// </summary>
+    public static class Analyzer
+    {
+        sealed class Node
+        {
+            public string Name;
+            public string Path;
+            public Dictionary<string, Node> Kids = new Dictionary<string, Node>(StringComparer.OrdinalIgnoreCase);
+            public List<ChangedFile> Files = new List<ChangedFile>();
+            public long Added;
+            public long Possible;
+            public bool IsNewDir;
+        }
+
+        public static List<Culprit> Analyze(IEnumerable<ChangedFile> files, IEnumerable<string> newFolders,
+                                            IEnumerable<SystemArea> areas, AnalyzerOptions opt)
+        {
+            if (opt == null) opt = new AnalyzerOptions();
+            var root = new Node { Name = "", Path = "" };
+
+            foreach (var f in files)
+            {
+                if (f == null || string.IsNullOrEmpty(f.Path)) continue;
+                if (f.AddedBytes <= 0 && f.PossibleBytes <= 0) continue;
+                var parts = f.Path.Split(new[] { '\\' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Length < 2) continue;
+                var node = root;
+                node.Added += f.AddedBytes; node.Possible += f.PossibleBytes;
+                for (int i = 0; i < parts.Length - 1; i++)
+                {
+                    Node kid;
+                    if (!node.Kids.TryGetValue(parts[i], out kid))
+                    {
+                        string path = i == 0 ? parts[0] + "\\" : (node.Path.EndsWith("\\") ? node.Path : node.Path + "\\") + parts[i];
+                        kid = new Node { Name = parts[i], Path = path };
+                        node.Kids[parts[i]] = kid;
+                    }
+                    node = kid;
+                    node.Added += f.AddedBytes; node.Possible += f.PossibleBytes;
+                }
+                node.Files.Add(f);
+            }
+
+            if (newFolders != null)
+            {
+                foreach (var dir in newFolders)
+                {
+                    var n = Find(root, dir);
+                    if (n != null) n.IsNewDir = true;
+                }
+            }
+
+            var areaList = (areas ?? Enumerable.Empty<SystemArea>())
+                .Where(a => a.Delta.HasValue && a.Delta.Value >= 1024L * 1024)
+                .ToList();
+
+            Func<Node, double> score = n => n.Added + opt.UnknownGrowthWeight * n.Possible;
+            double total = score(root) + areaList.Sum(a => (double)a.Delta.Value);
+            var result = new List<Culprit>();
+            if (total <= 0) return result;
+
+            double threshold = Math.Max(opt.MinBytes, total * opt.MinShare);
+            var scattered = new List<Node>();
+
+            Action<Node> process = null;
+            process = node =>
+            {
+                double s = score(node);
+                if (s < threshold) { scattered.Add(node); return; }
+
+                bool container = node == root || Labeler.IsGenericContainer(node.Path);
+
+                // A folder created inside the window is almost always "the thing" (an install, an unzipped download,
+                // a new sample library). Report it as one item instead of breaking it apart.
+                if (node.IsNewDir && !container)
+                {
+                    result.Add(Emit(node, null, opt, score));
+                    return;
+                }
+
+                var kids = node.Kids.Values.OrderByDescending(score).ToList();
+                double minKid = container ? threshold : Math.Max(threshold, opt.SignificantChildShare * s);
+                var big = kids.Where(k => score(k) >= minKid).ToList();
+                double bigSum = big.Sum(score);
+
+                if (big.Count > 0 && (container || bigSum >= 0.5 * s))
+                {
+                    foreach (var b in big) process(b);
+                    var bigSet = new HashSet<Node>(big);
+                    double rest = s - bigSum;
+                    if (node != root && rest >= threshold)
+                    {
+                        result.Add(Emit(node, bigSet, opt, score));
+                    }
+                    else
+                    {
+                        foreach (var k in kids) if (!bigSet.Contains(k)) scattered.Add(k);
+                        if (node.Files.Count > 0) scattered.Add(new Node { Path = node.Path, Files = node.Files, Added = node.Files.Sum(f => f.AddedBytes), Possible = node.Files.Sum(f => f.PossibleBytes) });
+                    }
+                    return;
+                }
+
+                if (node == root)
+                {
+                    foreach (var k in kids) scattered.Add(k);
+                    return;
+                }
+
+                // Growth is spread across this folder's contents with no single dominant subfolder: this is the spot.
+                result.Add(Emit(node, null, opt, score));
+            };
+            process(root);
+
+            foreach (var a in areaList)
+            {
+                var c = new Culprit
+                {
+                    Kind = CulpritKind.SystemArea,
+                    Path = a.Drive + " " + a.Name,
+                    Label = a.Name,
+                    Contents = a.Explanation,
+                    AddedBytes = a.Delta.Value,
+                    Score = a.Delta.Value,
+                    Confidence = "High",
+                    LastUtc = DateTime.UtcNow,
+                    FirstUtc = a.PreviousUtc ?? DateTime.UtcNow,
+                    HiddenReason = "Not visible as normal files",
+                    OpenTarget = a.OpenTarget,
+                    Note = "Grew since your last scan" + (string.IsNullOrEmpty(a.Activity) ? "" : ". " + a.Activity)
+                };
+                result.Add(c);
+            }
+
+            result = result.OrderByDescending(c => c.Score).ThenByDescending(c => c.LastUtc).ToList();
+
+            // Anything past the cap joins the "scattered" bucket.
+            var extra = new List<ChangedFile>();
+            if (result.Count > opt.MaxCulprits)
+            {
+                foreach (var c in result.Skip(opt.MaxCulprits)) extra.AddRange(c.Files);
+                result = result.Take(opt.MaxCulprits).ToList();
+            }
+
+            var scatteredFiles = new List<ChangedFile>();
+            foreach (var n in scattered) Collect(n, null, scatteredFiles);
+            scatteredFiles.AddRange(extra);
+            if (scatteredFiles.Count > 0)
+            {
+                var c = Build(scatteredFiles, opt, opt.UnknownGrowthWeight);
+                c.Kind = CulpritKind.Scattered;
+                c.Path = "Many small changes in different folders";
+                c.Label = "Small changes spread around (app updates, caches, logs)";
+                c.Note = "Each folder here added less than " + Format.Bytes((long)threshold);
+                if (c.Score > 0) result.Add(c);
+            }
+
+            for (int i = 0; i < result.Count; i++)
+            {
+                result[i].Rank = i + 1;
+                result[i].Likelihood = result[i].Score / total;
+            }
+            return result;
+        }
+
+        static Node Find(Node root, string path)
+        {
+            var parts = path.Split(new[] { '\\' }, StringSplitOptions.RemoveEmptyEntries);
+            var node = root;
+            foreach (var p in parts)
+            {
+                if (!node.Kids.TryGetValue(p, out node)) return null;
+            }
+            return node == root ? null : node;
+        }
+
+        static void Collect(Node n, HashSet<Node> exclude, List<ChangedFile> into)
+        {
+            into.AddRange(n.Files);
+            foreach (var k in n.Kids.Values)
+            {
+                if (exclude != null && exclude.Contains(k)) continue;
+                Collect(k, null, into);
+            }
+        }
+
+        static Culprit Emit(Node node, HashSet<Node> exclude, AnalyzerOptions opt, Func<Node, double> score)
+        {
+            var files = new List<ChangedFile>();
+            Collect(node, exclude, files);
+            var c = Build(files, opt, opt.UnknownGrowthWeight);
+            c.Kind = CulpritKind.Folder;
+            c.Path = node.Path;
+            c.IsNewFolder = node.IsNewDir;
+            c.IsRemainder = exclude != null && exclude.Count > 0;
+            c.Label = Labeler.Describe(node.Path);
+            c.HiddenReason = Labeler.HiddenReasonFromPath(node.Path);
+            if (c.IsNewFolder) c.Note = "New folder created " + Format.When(c.FirstUtc);
+            else if (c.IsRemainder) c.Note = "Other new files in this folder (its bigger subfolders are listed separately)";
+            if (c.IsNewFolder) c.Confidence = "High";
+            return c;
+        }
+
+        static Culprit Build(List<ChangedFile> files, AnalyzerOptions opt, double unknownWeight)
+        {
+            var c = new Culprit();
+            c.AddedBytes = files.Sum(f => f.AddedBytes);
+            c.PossibleBytes = files.Sum(f => f.PossibleBytes);
+            c.Score = c.AddedBytes + unknownWeight * c.PossibleBytes;
+            c.NewFiles = files.Count(f => f.Kind == ChangeKind.New);
+            c.GrewFiles = files.Count - c.NewFiles;
+            if (files.Count > 0)
+            {
+                c.FirstUtc = files.Min(f => f.TimeUtc);
+                c.LastUtc = files.Max(f => f.TimeUtc);
+            }
+            c.Contents = Labeler.Summarize(files);
+            c.Files = files.OrderByDescending(f => f.AddedBytes + f.PossibleBytes).Take(opt.MaxFilesPerCulprit).ToList();
+            double exact = c.AddedBytes;
+            c.Confidence = c.Score <= 0 ? "Low" : exact >= 0.8 * c.Score ? "High" : exact >= 0.4 * c.Score ? "Medium" : "Low";
+            return c;
+        }
+    }
+}

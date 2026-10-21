@@ -1,0 +1,49 @@
+name: Build SpaceSleuth.exe
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Run ranking tests
+        shell: pwsh
+        run: |
+          dotnet build tests/SpaceSleuth.Tests/SpaceSleuth.Tests.csproj -c Release -o test-out
+          ./test-out/SpaceSleuth.Tests.exe
+          if ($LASTEXITCODE -ne 0) { throw "Tests failed" }
+
+      - name: Build app
+        shell: pwsh
+        run: dotnet build src/SpaceSleuth/SpaceSleuth.csproj -c Release -o out -p:Version=1.0.${{ github.run_number }} -p:InformationalVersion=1.0.${{ github.run_number }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpaceSleuth
+          path: out/SpaceSleuth.exe
+
+      - name: Publish as the "latest" release (direct .exe download link)
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest out/SpaceSleuth.exe \
+            --target "$GITHUB_SHA" \
+            --title "Space Sleuth v1.0.${{ github.run_number }}" \
+            --notes "Built automatically from commit ${GITHUB_SHA::7}. Download **SpaceSleuth.exe** below and run it (it will ask for administrator rights)." \
+            --latest
