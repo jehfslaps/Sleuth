@@ -46,6 +46,17 @@ namespace SpaceSleuth.Core
         }
     }
 
+    /// <summary>Broad kind of culprit. The UI gives each one its own color everywhere.</summary>
+    public enum Category
+    {
+        YourFiles,
+        Libraries,
+        Programs,
+        Games,
+        Caches,
+        System
+    }
+
     public enum CulpritKind
     {
         Folder,

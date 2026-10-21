@@ -13,309 +13,267 @@ using SpaceSleuth.Windows;
 
 namespace SpaceSleuth.UI
 {
-    internal sealed class BufferedListView : ListView
-    {
-        public BufferedListView()
-        {
-            DoubleBuffered = true;
-        }
-    }
-
     public sealed class MainForm : Form
     {
-        static readonly Color Accent = Color.FromArgb(0, 95, 184);
-        static readonly Color Muted = Color.FromArgb(96, 96, 96);
-        static readonly Color Warn = Color.FromArgb(157, 93, 0);
-
         static readonly KeyValuePair<string, TimeSpan>[] TimeWindows =
         {
-            new KeyValuePair<string, TimeSpan>("last 6 hours", TimeSpan.FromHours(6)),
-            new KeyValuePair<string, TimeSpan>("last 12 hours", TimeSpan.FromHours(12)),
-            new KeyValuePair<string, TimeSpan>("last 24 hours", TimeSpan.FromHours(24)),
-            new KeyValuePair<string, TimeSpan>("last 48 hours", TimeSpan.FromHours(48)),
-            new KeyValuePair<string, TimeSpan>("last 3 days", TimeSpan.FromDays(3)),
-            new KeyValuePair<string, TimeSpan>("last 7 days", TimeSpan.FromDays(7)),
-            new KeyValuePair<string, TimeSpan>("last 14 days", TimeSpan.FromDays(14)),
-            new KeyValuePair<string, TimeSpan>("last 30 days", TimeSpan.FromDays(30)),
+            new KeyValuePair<string, TimeSpan>("6h", TimeSpan.FromHours(6)),
+            new KeyValuePair<string, TimeSpan>("12h", TimeSpan.FromHours(12)),
+            new KeyValuePair<string, TimeSpan>("24h", TimeSpan.FromHours(24)),
+            new KeyValuePair<string, TimeSpan>("48h", TimeSpan.FromHours(48)),
+            new KeyValuePair<string, TimeSpan>("3 days", TimeSpan.FromDays(3)),
+            new KeyValuePair<string, TimeSpan>("7 days", TimeSpan.FromDays(7)),
+            new KeyValuePair<string, TimeSpan>("14 days", TimeSpan.FromDays(14)),
+            new KeyValuePair<string, TimeSpan>("30 days", TimeSpan.FromDays(30)),
         };
 
-        readonly float scale;
-        readonly ComboBox windowBox = new ComboBox();
-        readonly ComboBox driveBox = new ComboBox();
-        readonly CheckBox thoroughBox = new CheckBox();
-        readonly Button scanButton = new Button();
-        readonly TextBox filterBox = new TextBox();
-        readonly Label headline = new Label();
-        readonly Label subline = new Label();
-        readonly Label notes = new Label();
-        readonly BufferedListView culpritList = new BufferedListView();
-        readonly BufferedListView fileList = new BufferedListView();
-        readonly TextBox detailBox = new TextBox();
-        readonly SplitContainer split = new SplitContainer();
-        readonly ToolStripStatusLabel statusLabel = new ToolStripStatusLabel();
-        readonly ToolStripProgressBar progressBar = new ToolStripProgressBar();
-        readonly ContextMenuStrip menu = new ContextMenuStrip();
-        readonly ToolTip tips = new ToolTip();
-        readonly ListViewGroup rankedGroup = new ListViewGroup("ranked", "Most likely → least likely places your space went");
-        readonly ListViewGroup areaGroup = new ListViewGroup("areas", "System space (restore points, hibernation, page file, Recycle Bin) — current sizes");
+        const string FindText = "Find my space";
+        const string StopText = "Stop looking";
 
+        readonly HeroPanel hero = new HeroPanel();
+        readonly Toolbar toolbar;
+        readonly Segmented windowPicker;
+        readonly PillButton drivePicker = new PillButton("All drives", PillKind.Secondary) { ShowCaret = true };
+        readonly ToggleChip thorough = new ToggleChip("Thorough check");
+        readonly PillButton findButton = new PillButton(FindText, PillKind.Primary);
+        readonly SearchBox filter = new SearchBox("Filter results…");
+        readonly HeadlinePanel headline = new HeadlinePanel();
+        readonly ResultList results = new ResultList();
+        readonly DetailPanel detail = new DetailPanel();
+        readonly StatusBar status = new StatusBar();
+        readonly ContextMenuStrip driveMenu = Theme.Menu();
+        readonly ContextMenuStrip itemMenu = Theme.Menu();
+        readonly ToolTip tips = new ToolTip();
+        readonly System.Windows.Forms.Timer frame = new System.Windows.Forms.Timer { Interval = 33 };
+        readonly List<IAnimated> animated = new List<IAnimated>();
+
+        List<DriveChoice> drives = new List<DriveChoice>();
+        DriveChoice chosenDrive; // null = all drives
         ScanResult result;
         CancellationTokenSource cts;
         DateTime lastStatus = DateTime.MinValue;
 
         public MainForm()
         {
-            using (var g = CreateGraphics()) scale = g.DpiX / 96f;
+            using (var g = CreateGraphics()) Theme.Scale = g.DpiX / 96f;
 
             SuspendLayout();
             AutoScaleMode = AutoScaleMode.None;
-            Font = SystemFonts.MessageBoxFont;
-            Text = "Space Sleuth — where did my disk space go?";
-            Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+            Font = Theme.Ui(14, Weight.Regular);
+            Text = "Space Sleuth";
+            BackColor = Theme.Cream;
+            ForeColor = Theme.Ink;
+            try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
             StartPosition = FormStartPosition.CenterScreen;
-            Size = new Size(S(1280), S(820));
-            MinimumSize = new Size(S(820), S(520));
-            BackColor = SystemColors.Window;
+            var work = Screen.PrimaryScreen.WorkingArea;
+            Size = new Size(Math.Min(Theme.Si(1340), work.Width - 40), Math.Min(Theme.Si(940), work.Height - 40));
+            MinimumSize = new Size(Theme.Si(1000), Theme.Si(640));
 
-            BuildToolbar();
-            BuildHeader();
-            BuildLists();
-            BuildStatus();
+            windowPicker = new Segmented(TimeWindows.Select(w => w.Key).ToArray(), 3);
+            toolbar = new Toolbar();
+            toolbar.Controls.AddRange(new Control[] { windowPicker, drivePicker, thorough, findButton, filter });
+            tips.SetToolTip(windowPicker, "How far back to look");
+            tips.SetToolTip(thorough, "Also checks the dates on every file, not just Windows' change log.\nSlower, but catches anything the change log has already forgotten.");
+            tips.SetToolTip(drivePicker, "Which drive to look at");
 
-            Controls.Add(split);
-            Controls.Add(headerPanel);
-            Controls.Add(toolbar);
-            Controls.Add(statusStrip);
-            ResumeLayout(true);
+            Controls.AddRange(new Control[] { hero, toolbar, headline, results, detail, status });
+
+            BuildDriveMenu();
+            BuildItemMenu();
+            Wire();
+
+            var version = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>();
+            status.Version = "v" + (version != null ? version.InformationalVersion : "1.0");
+            status.Status = Native.IsElevated() ? "Ready when you are." : "Not running as administrator — you'll only see part of the picture.";
+            headline.Plain = "Where did your space go?";
+
+            animated.AddRange(new IAnimated[] { windowPicker, status, results, detail, detail.Files });
+            frame.Tick += (s, e) =>
+            {
+                if (WindowState == FormWindowState.Minimized) return;
+                // Stay light: idle animations (Pebble bobbing) only run while the window is in front or a scan is going.
+                if (Form.ActiveForm != this && cts == null) return;
+                float now = Theme.Now;
+                foreach (var a in animated) a.Tick(now);
+            };
+
+            ResumeLayout(false);
 
             Shown += (s, e) =>
             {
-                split.SplitterDistance = Math.Max(S(200), (int)(split.Height * 0.58));
+                frame.Start();
 #if PREVIEW
-                result = PreviewData.Build();
-                ShowResult();
+                if (Environment.GetEnvironmentVariable("PREVIEW_STATE") == "scan")
+                {
+                    status.Busy = true;
+                    SetHeadline("Looking around your drives\u2026", null, null);
+                    results.State = ListMood.Scanning;
+                    results.MoodTitle = "Looking around\u2026";
+                    results.MoodText = "C: reading change journal... 412,300 records";
+                    detail.MascotMood = Mood.Searching;
+                    detail.PlaceholderTitle = "Hang tight \u2014 cards show up in a moment.";
+                    detail.SetItem(null, null);
+                    status.Status = "C: reading change journal... 412,300 records";
+                    findButton.Text = StopText;
+                    PerformLayout();
+                }
+                else
+                {
+                    result = PreviewData.Build();
+                    ShowResult();
+                }
 #else
                 StartScan();
 #endif
             };
-            FormClosing += (s, e) => { if (cts != null) cts.Cancel(); };
-        }
-
-        int S(int v)
-        {
-            return (int)Math.Round(v * scale);
+            FormClosing += (s, e) =>
+            {
+                frame.Stop();
+                if (cts != null) cts.Cancel();
+            };
         }
 
         // ---------------- Layout ----------------
 
-        FlowLayoutPanel toolbar;
-        TableLayoutPanel headerPanel;
-        StatusStrip statusStrip;
-
-        void BuildToolbar()
+        /// <summary>The row of controls under the hero, with a little "Look back" caption.</summary>
+        sealed class Toolbar : Painted
         {
-            toolbar = new FlowLayoutPanel
+            public float CaptionWidth;
+
+            protected override void Draw(Graphics g)
             {
-                Dock = DockStyle.Top,
-                AutoSize = true,
-                Padding = new Padding(S(10), S(10), S(10), S(4)),
-                WrapContents = true,
-                BackColor = SystemColors.Window
+                var f = Theme.Ui(13.5f, Weight.Medium);
+                CaptionWidth = Theme.Width(g, "Look back", f);
+                Theme.Text(g, "Look back", f, Theme.InkA(150), new RectangleF(Theme.S(32), 0, CaptionWidth + Theme.S(4), Theme.S(42)));
+            }
+        }
+
+        protected override void OnLayout(LayoutEventArgs e)
+        {
+            base.OnLayout(e);
+            if (toolbar == null) return;
+            int W = ClientSize.Width, H = ClientSize.Height;
+            int y = 0;
+            hero.SetBounds(0, y, W, Theme.Si(128));
+            y = hero.Bottom + Theme.Si(14);
+
+            // Toolbar: wraps onto a second row if the window is narrow
+            int x = Theme.Si(32) + Theme.Si(84), rowH = Theme.Si(44), gap = Theme.Si(10);
+            int ty = 0, maxX = W - Theme.Si(32);
+            Action<Control, int> place = (c, w) =>
+            {
+                if (x + w > maxX && x > Theme.Si(120)) { x = Theme.Si(32); ty += rowH + Theme.Si(8); }
+                c.SetBounds(x, ty, w, rowH);
+                x += w + gap;
             };
+            place(windowPicker, windowPicker.PreferredWidth());
+            place(drivePicker, Math.Max(drivePicker.PreferredWidth(), Theme.Si(130)));
+            place(thorough, thorough.PreferredWidth());
+            place(findButton, findButton.PreferredWidth());
+            int filterW = Math.Max(Theme.Si(180), maxX - x);
+            if (filterW > Theme.Si(380)) { filter.SetBounds(maxX - Theme.Si(300), ty, Theme.Si(300), rowH); }
+            else place(filter, Math.Max(Theme.Si(180), Math.Min(filterW, Theme.Si(300))));
+            toolbar.SetBounds(0, y, W, ty + rowH + Theme.Si(2));
+            y = toolbar.Bottom + Theme.Si(10);
 
-            var l1 = MakeLabel("Show space added in the");
-            windowBox.DropDownStyle = ComboBoxStyle.DropDownList;
-            windowBox.Width = S(130);
-            foreach (var w in TimeWindows) windowBox.Items.Add(w.Key);
-            windowBox.SelectedIndex = 3; // 48 hours
-            windowBox.Margin = new Padding(S(4), S(3), S(4), S(3));
+            int hh = headline.Measure(W);
+            headline.SetBounds(0, y, W, hh);
+            y = headline.Bottom + Theme.Si(4);
 
-            var l2 = MakeLabel("on");
-            driveBox.DropDownStyle = ComboBoxStyle.DropDownList;
-            driveBox.Width = S(260);
-            driveBox.Margin = new Padding(S(4), S(3), S(10), S(3));
-            driveBox.Items.Add("All drives");
+            int statusH = Theme.Si(34);
+            status.SetBounds(0, H - statusH, W, statusH);
+
+            int mainH = Math.Max(Theme.Si(200), status.Top - y);
+            int leftW = (int)(W * 0.57);
+            int off = Theme.Si(6);
+            results.SetBounds(0, y + off, leftW, mainH - off);
+            detail.SetBounds(leftW, y, W - leftW, mainH);
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            // Windows 11: cream title bar with oxblood text so the window feels like one piece of paper.
             try
             {
-                foreach (var d in ScanEngine.AvailableDrives()) driveBox.Items.Add(d);
+                int caption = 0x00F2FCFF, text = 0x00120E4A, border = 0x00DAEBF3;
+                DwmSetWindowAttribute(Handle, 35, ref caption, 4);
+                DwmSetWindowAttribute(Handle, 36, ref text, 4);
+                DwmSetWindowAttribute(Handle, 34, ref border, 4);
             }
-            catch
+            catch { }
+        }
+
+        [DllImport("dwmapi.dll")]
+        static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
+        // ---------------- Wiring ----------------
+
+        void Wire()
+        {
+            findButton.Click += (s, e) => StartScan();
+            drivePicker.Click += (s, e) => driveMenu.Show(drivePicker, new Point(0, drivePicker.Height + Theme.Si(4)));
+            filter.Box.TextChanged += (s, e) => FillResults(false);
+
+            results.SelectionChanged += (s, e) => ShowDetails();
+            results.ItemActivated += (s, e) => OpenTag(results.SelectedTag);
+            detail.Files.ItemActivated += (s, e) => OpenTag(detail.Files.SelectedFile);
+            detail.OpenButton.Click += (s, e) => OpenTag(detail.Current);
+            detail.CopyButton.Click += (s, e) => CopyTag(detail.Current);
+
+            results.KeyDown += (s, e) => { if (e.Control && e.KeyCode == Keys.C) { CopyTag(results.SelectedTag); e.Handled = true; } };
+            detail.Files.KeyDown += (s, e) => { if (e.Control && e.KeyCode == Keys.C) { CopyTag(detail.Files.SelectedFile); e.Handled = true; } };
+        }
+
+        void BuildDriveMenu()
+        {
+            try { drives = ScanEngine.AvailableDrives(); } catch { drives = new List<DriveChoice>(); }
+            driveMenu.Items.Clear();
+            var all = Theme.MenuItem("All drives", (s, e) => ChooseDrive(null));
+            all.Checked = chosenDrive == null;
+            driveMenu.Items.Add(all);
+            if (drives.Count > 0) driveMenu.Items.Add(new ToolStripSeparator());
+            foreach (var d in drives)
             {
+                var drive = d;
+                var item = Theme.MenuItem(d.ToString(), (s, e) => ChooseDrive(drive));
+                item.Checked = chosenDrive != null && chosenDrive.Drive == d.Drive;
+                driveMenu.Items.Add(item);
             }
-            driveBox.SelectedIndex = 0;
-
-            thoroughBox.Text = "Thorough (slower)";
-            thoroughBox.AutoSize = true;
-            thoroughBox.Margin = new Padding(S(4), S(6), S(10), S(3));
-            tips.SetToolTip(thoroughBox,
-                "Also checks the dates on every file, not just Windows' change log.\n" +
-                "Slower, but catches anything the change log has already forgotten.");
-
-            scanButton.Text = "Find where my space went";
-            scanButton.AutoSize = true;
-            scanButton.Padding = new Padding(S(8), S(2), S(8), S(2));
-            scanButton.Margin = new Padding(S(4), S(1), S(16), S(3));
-            scanButton.BackColor = Accent;
-            scanButton.ForeColor = Color.White;
-            scanButton.FlatStyle = FlatStyle.Flat;
-            scanButton.FlatAppearance.BorderSize = 0;
-            scanButton.Font = new Font(Font, FontStyle.Bold);
-            scanButton.Click += (s, e) => StartScan();
-
-            filterBox.Width = S(220);
-            filterBox.Margin = new Padding(S(4), S(3), S(4), S(3));
-            filterBox.TextChanged += (s, e) => FillCulprits();
-            filterBox.HandleCreated += (s, e) =>
-            {
-                try { SendMessage(filterBox.Handle, 0x1501 /* EM_SETCUEBANNER */, (IntPtr)1, "Filter results…"); }
-                catch { /* placeholder text is cosmetic */ }
-            };
-
-            toolbar.Controls.AddRange(new Control[] { l1, windowBox, l2, driveBox, thoroughBox, scanButton, filterBox });
         }
 
-        Label MakeLabel(string text)
+        void ChooseDrive(DriveChoice d)
         {
-            return new Label { Text = text, AutoSize = true, Margin = new Padding(S(4), S(7), 0, S(3)) };
+            chosenDrive = d;
+            drivePicker.Text = d == null ? "All drives" : d.Drive + (string.IsNullOrEmpty(d.Label) ? "" : " " + d.Label);
+            BuildDriveMenu();
+            PerformLayout();
         }
 
-        void BuildHeader()
+        void BuildItemMenu()
         {
-            headerPanel = new TableLayoutPanel
+            var open = Theme.MenuItem("Open in File Explorer", (s, e) => OpenTag(MenuTag()));
+            open.Font = Theme.Ui(14, Weight.Semibold);
+            var copy = Theme.MenuItem("Copy path", (s, e) => CopyTag(MenuTag()));
+            itemMenu.Items.Add(open);
+            itemMenu.Items.Add(copy);
+            itemMenu.Opening += (s, e) =>
             {
-                Dock = DockStyle.Top,
-                AutoSize = true,
-                ColumnCount = 1,
-                Padding = new Padding(S(14), S(4), S(14), S(8)),
-                BackColor = SystemColors.Window
-            };
-            headerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-
-            headline.AutoSize = true;
-            headline.Font = new Font(Font.FontFamily, Font.SizeInPoints + 5, FontStyle.Bold);
-            headline.ForeColor = Accent;
-            headline.Text = "Ready";
-            headline.Margin = new Padding(0, S(4), 0, S(2));
-
-            subline.AutoSize = true;
-            subline.ForeColor = Muted;
-            subline.Margin = new Padding(0, 0, 0, S(2));
-
-            notes.AutoSize = true;
-            notes.ForeColor = Warn;
-            notes.Margin = new Padding(0, S(2), 0, 0);
-            notes.Visible = false;
-
-            headerPanel.Controls.Add(headline, 0, 0);
-            headerPanel.Controls.Add(subline, 0, 1);
-            headerPanel.Controls.Add(notes, 0, 2);
-            headerPanel.Resize += (s, e) =>
-            {
-                int w = Math.Max(S(200), headerPanel.ClientSize.Width - S(30));
-                headline.MaximumSize = new Size(w, 0);
-                subline.MaximumSize = new Size(w, 0);
-                notes.MaximumSize = new Size(w, 0);
-            };
-        }
-
-        void BuildLists()
-        {
-            split.Dock = DockStyle.Fill;
-            split.Orientation = Orientation.Horizontal;
-            split.SplitterWidth = S(6);
-            split.BackColor = SystemColors.ControlLight;
-            split.Panel1.BackColor = SystemColors.Window;
-            split.Panel2.BackColor = SystemColors.Window;
-
-            SetupList(culpritList);
-            culpritList.ShowGroups = true;
-            culpritList.Groups.Add(rankedGroup);
-            culpritList.Groups.Add(areaGroup);
-            culpritList.Columns.Add("#", S(36));
-            culpritList.Columns.Add("Likelihood", S(90), HorizontalAlignment.Right);
-            culpritList.Columns.Add("Space added", S(150), HorizontalAlignment.Right);
-            culpritList.Columns.Add("Where", S(420));
-            culpritList.Columns.Add("What it probably is", S(260));
-            culpritList.Columns.Add("What's in it", S(240));
-            culpritList.Columns.Add("When", S(170));
-            culpritList.Columns.Add("Notes", S(320));
-            culpritList.SelectedIndexChanged += (s, e) => ShowDetails();
-            culpritList.ItemActivate += (s, e) => OpenSelected(culpritList);
-
-            detailBox.Dock = DockStyle.Top;
-            detailBox.Multiline = true;
-            detailBox.ReadOnly = true;
-            detailBox.BorderStyle = BorderStyle.None;
-            detailBox.BackColor = SystemColors.Window;
-            detailBox.Height = S(78);
-            detailBox.ScrollBars = ScrollBars.Vertical;
-            detailBox.Padding = new Padding(S(6));
-
-            var detailHost = new Panel { Dock = DockStyle.Top, Height = S(86), Padding = new Padding(S(12), S(6), S(12), S(2)) };
-            detailHost.Controls.Add(detailBox);
-            detailBox.Dock = DockStyle.Fill;
-
-            SetupList(fileList);
-            fileList.Columns.Add("File", S(320));
-            fileList.Columns.Add("Size on disk", S(110), HorizontalAlignment.Right);
-            fileList.Columns.Add("Change", S(150));
-            fileList.Columns.Add("When", S(170));
-            fileList.Columns.Add("Folder", S(520));
-            fileList.ItemActivate += (s, e) => OpenSelected(fileList);
-
-            split.Panel1.Controls.Add(culpritList);
-            split.Panel2.Controls.Add(fileList);
-            split.Panel2.Controls.Add(detailHost);
-
-            var open = new ToolStripMenuItem("Open in File Explorer", null, (s, e) => OpenSelected(menu.SourceControl as ListView));
-            open.Font = new Font(open.Font, FontStyle.Bold);
-            var copy = new ToolStripMenuItem("Copy path", null, (s, e) => CopySelected(menu.SourceControl as ListView));
-            menu.Items.Add(open);
-            menu.Items.Add(copy);
-            menu.Opening += (s, e) =>
-            {
-                var lv = menu.SourceControl as ListView;
-                if (lv == null || lv.SelectedItems.Count == 0) { e.Cancel = true; return; }
-                var tag = lv.SelectedItems[0].Tag;
+                object tag = MenuTag();
                 string target = OpenTargetFor(tag);
+                if (tag == null || (target == null && PathFor(tag) == null)) { e.Cancel = true; return; }
                 open.Enabled = target != null;
                 open.Text = target != null && !target.Contains("\\") ? "Open settings" : "Open in File Explorer";
                 copy.Enabled = PathFor(tag) != null;
             };
-            culpritList.ContextMenuStrip = menu;
-            fileList.ContextMenuStrip = menu;
+            results.ContextMenuStrip = itemMenu;
+            detail.Files.ContextMenuStrip = itemMenu;
         }
 
-        void SetupList(ListView lv)
+        object MenuTag()
         {
-            lv.Dock = DockStyle.Fill;
-            lv.View = View.Details;
-            lv.FullRowSelect = true;
-            lv.HideSelection = false;
-            lv.MultiSelect = false;
-            lv.BorderStyle = BorderStyle.None;
-            lv.HeaderStyle = ColumnHeaderStyle.Nonclickable;
-            lv.KeyDown += (s, e) =>
-            {
-                if (e.Control && e.KeyCode == Keys.C) { CopySelected(lv); e.Handled = true; }
-            };
-        }
-
-        void BuildStatus()
-        {
-            statusStrip = new StatusStrip { SizingGrip = true };
-            statusLabel.Spring = true;
-            statusLabel.TextAlign = ContentAlignment.MiddleLeft;
-            statusLabel.Text = Native.IsElevated() ? "Ready." : "Not running as administrator — results will be limited.";
-            progressBar.Style = ProgressBarStyle.Marquee;
-            progressBar.MarqueeAnimationSpeed = 30;
-            progressBar.Visible = false;
-            progressBar.Size = new Size(S(160), S(16));
-            var version = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>();
-            var verLabel = new ToolStripStatusLabel("v" + (version != null ? version.InformationalVersion : "1.0")) { ForeColor = Muted };
-            statusStrip.Items.Add(statusLabel);
-            statusStrip.Items.Add(progressBar);
-            statusStrip.Items.Add(verLabel);
+            if (itemMenu.SourceControl == detail.Files) return detail.Files.SelectedFile;
+            return results.SelectedTag;
         }
 
         // ---------------- Scanning ----------------
@@ -325,43 +283,38 @@ namespace SpaceSleuth.UI
             if (cts != null)
             {
                 cts.Cancel();
-                scanButton.Enabled = false;
-                SetStatus("Stopping…", true);
+                findButton.Enabled = false;
+                findButton.Text = "Stopping…";
+                SetStatus("Wrapping up…", true);
                 return;
             }
 
-            var opt = new ScanOptions
-            {
-                Window = TimeWindows[Math.Max(0, windowBox.SelectedIndex)].Value,
-                Thorough = thoroughBox.Checked
-            };
-            var choice = driveBox.SelectedItem as DriveChoice;
-            if (choice != null) opt.Drives.Add(choice.Drive);
-            else
-            {
-                foreach (var item in driveBox.Items)
-                {
-                    var d = item as DriveChoice;
-                    if (d != null) opt.Drives.Add(d.Drive);
-                }
-            }
+            var window = TimeWindows[Math.Max(0, windowPicker.SelectedIndex)].Value;
+            var opt = new ScanOptions { Window = window, Thorough = thorough.Checked };
+            if (chosenDrive != null) opt.Drives.Add(chosenDrive.Drive);
+            else opt.Drives.AddRange(drives.Select(d => d.Drive));
             if (opt.Drives.Count == 0)
             {
-                headline.Text = "No drives found to scan.";
+                headline.Plain = "Hmm — there are no drives to look at.";
+                headline.Invalidate();
                 return;
             }
 
             cts = new CancellationTokenSource();
             var token = cts.Token;
-            scanButton.Text = "Stop";
-            windowBox.Enabled = driveBox.Enabled = thoroughBox.Enabled = false;
-            progressBar.Visible = true;
-            headline.Text = "Looking for where your space went in the " + Format.Window(opt.Window) + "…";
-            subline.Text = "Scanning " + string.Join(", ", opt.Drives) + ". The first look at a drive can take a little longer.";
-            notes.Visible = false;
-            culpritList.Items.Clear();
-            fileList.Items.Clear();
-            detailBox.Text = "";
+            findButton.Text = StopText;
+            windowPicker.Enabled = drivePicker.Enabled = thorough.Enabled = false;
+            status.Busy = true;
+
+            SetHeadline("Looking around your drives…", null, null);
+            results.Clear();
+            results.State = ListMood.Scanning;
+            results.MoodTitle = "Looking around…";
+            results.MoodText = "Checking " + string.Join(", ", opt.Drives) + " for the " + Format.Window(window) + ". This usually takes a few seconds.";
+            detail.MascotMood = Mood.Searching;
+            detail.PlaceholderTitle = "Hang tight \u2014 cards show up in a moment.";
+            detail.SetItem(null, null);
+            PerformLayout();
 
             var progress = new Progress<string>(s => SetStatus(s, false));
             try
@@ -369,28 +322,39 @@ namespace SpaceSleuth.UI
                 var res = await Task.Run(() => ScanEngine.Run(opt, progress, token));
                 result = res;
                 ShowResult();
-                SetStatus("Done in " + res.Elapsed.TotalSeconds.ToString("0.0") + " s. Double-click a row to open it in File Explorer.", true);
+                SetStatus("All done in " + res.Elapsed.TotalSeconds.ToString("0.0") + " s — double-click any card to open it.", true);
             }
             catch (OperationCanceledException)
             {
-                headline.Text = "Scan stopped.";
-                subline.Text = "";
-                SetStatus("Scan stopped.", true);
+                SetHeadline("Okay — stopped.", null, null);
+                results.State = ListMood.Stopped;
+                results.MoodTitle = "Okay — stopped.";
+                results.MoodText = "Run it again whenever you like.";
+                detail.MascotMood = Mood.Calm;
+                SetStatus("Stopped.", true);
             }
             catch (Exception ex)
             {
-                headline.Text = "The scan ran into a problem.";
-                subline.Text = ex.Message;
-                SetStatus("Error: " + ex.Message, true);
+                SetHeadline("Hmm, something got in the way.", null, null);
+                results.State = ListMood.Error;
+                results.MoodTitle = "Hmm, something got in the way.";
+                results.MoodText = ex.Message;
+                detail.MascotMood = Mood.Worried;
+                SetStatus("Problem: " + ex.Message, true);
             }
             finally
             {
+                detail.PlaceholderTitle = "Pick a card to see what's inside.";
+                if (results.SelectedTag == null) detail.SetItem(null, null);
                 cts.Dispose();
                 cts = null;
-                scanButton.Text = "Find where my space went";
-                scanButton.Enabled = true;
-                windowBox.Enabled = driveBox.Enabled = thoroughBox.Enabled = true;
-                progressBar.Visible = false;
+                findButton.Text = FindText;
+                findButton.Enabled = true;
+                windowPicker.Enabled = drivePicker.Enabled = thorough.Enabled = true;
+                status.Busy = false;
+                results.Invalidate();
+                detail.Invalidate();
+                PerformLayout();
             }
         }
 
@@ -398,200 +362,105 @@ namespace SpaceSleuth.UI
         {
             if (!force && (DateTime.UtcNow - lastStatus).TotalMilliseconds < 100) return;
             lastStatus = DateTime.UtcNow;
-            statusLabel.Text = text;
+            status.Status = text;
+            if (cts != null && results.State == ListMood.Scanning && !force)
+            {
+                results.MoodText = text;
+                results.Invalidate();
+            }
+        }
+
+        void SetHeadline(string plain, string amount, string target)
+        {
+            headline.Plain = plain;
+            headline.Amount = amount;
+            headline.Target = target;
+            headline.Chips.Clear();
+            headline.Notes.Clear();
+            headline.Invalidate();
         }
 
         // ---------------- Showing results ----------------
 
+        static string LastSegment(string path)
+        {
+            string p = path.TrimEnd('\\');
+            int cut = p.LastIndexOf('\\');
+            return cut >= 0 && cut < p.Length - 1 ? p.Substring(cut + 1) : path;
+        }
+
         void ShowResult()
         {
             var r = result;
-            var top = r.Culprits.FirstOrDefault(c => c.Kind != CulpritKind.Scattered);
             string window = Format.Window(r.Window);
+            var top = r.Culprits.FirstOrDefault(c => c.Kind != CulpritKind.Scattered);
 
             if (top == null)
-            {
-                headline.Text = r.Culprits.Count == 0
-                    ? "No noticeable new data in the " + window + "."
-                    : "Only small scattered changes in the " + window + ".";
-            }
+                SetHeadline(r.Culprits.Count == 0 ? "Nothing big showed up — your drive's been calm."
+                                                  : "Just little bits here and there — nothing big.", null, null);
             else if (top.AddedBytes > 0)
-            {
-                headline.Text = "Most likely: " + Format.Bytes(top.AddedBytes) + " went to " +
-                                (top.Kind == CulpritKind.Folder ? top.Path : top.Label);
-            }
+                SetHeadline(null, Format.Bytes(top.AddedBytes), top.Kind == CulpritKind.Folder ? LastSegment(top.Path) : top.Label);
             else
-            {
-                headline.Text = "Most likely: an existing file grew in " + top.Path;
-            }
+                SetHeadline("Most likely, an existing file grew in " + LastSegment(top.Path) + ".", null, null);
 
-            var parts = new List<string>();
-            parts.Add("Found " + Format.Bytes(r.TotalAdded) + " of new data in the " + window + ".");
+            headline.Chips.Add(new KeyValuePair<string, Hue>(Format.Bytes(r.TotalAdded) + " new in the " + window, Theme.HSky));
             foreach (var d in r.Drives)
             {
-                string s = d.Drive + " has " + Format.Bytes(d.FreeBytes) + " free";
+                headline.Chips.Add(new KeyValuePair<string, Hue>(d.Drive + " has " + Format.Bytes(d.FreeBytes) + " free", Theme.HMint));
                 if (d.PrevFreeBytes.HasValue && d.PrevScanUtc.HasValue)
                 {
                     long change = d.FreeBytes - d.PrevFreeBytes.Value;
-                    s += " (" + (change == 0 ? "no change" : Format.SignedBytes(change)) + " since your last scan, " + Format.When(d.PrevScanUtc.Value) + ")";
+                    headline.Chips.Add(new KeyValuePair<string, Hue>(
+                        (change == 0 ? "No change" : Format.SignedBytes(change)) + " since your last scan · " + Format.When(d.PrevScanUtc.Value),
+                        change < 0 ? Theme.HCoral : Theme.HMint));
                 }
-                parts.Add(s + ".");
             }
-            subline.Text = string.Join("  ", parts);
-
-            var noteLines = new List<string>();
-            foreach (var d in r.Drives) if (!string.IsNullOrEmpty(d.Note)) noteLines.Add(d.Note);
-            noteLines.AddRange(r.Notes);
+            foreach (var d in r.Drives) if (!string.IsNullOrEmpty(d.Note)) headline.Notes.Add(d.Note);
+            headline.Notes.AddRange(r.Notes);
             if (r.Drives.All(d => !d.PrevScanUtc.HasValue))
-                noteLines.Add("First scan: from now on Space Sleuth remembers sizes, so next time it can also show exactly how much restore points, the page file and big existing files grew.");
-            notes.Text = string.Join("\n", noteLines.Select(n => "• " + n));
-            notes.Visible = noteLines.Count > 0;
+                headline.Notes.Add("First look done. Next time, you'll also see exactly how much restore points, the page file and big existing files grew.");
 
-            FillCulprits();
-            if (culpritList.Items.Count > 0)
-            {
-                culpritList.Items[0].Selected = true;
-                culpritList.Items[0].Focused = true;
-            }
+            detail.MascotMood = r.Culprits.Count > 0 ? Mood.Grin : Mood.Calm;
+            FillResults(true);
+            PerformLayout();
         }
 
-        void FillCulprits()
+        void FillResults(bool fromScan)
         {
             if (result == null) return;
-            string filter = filterBox.Text.Trim();
+            string f = filter.Box.Text.Trim();
             Func<string[], bool> matches = fields =>
-                filter.Length == 0 || fields.Any(f => f != null && f.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0);
+                f.Length == 0 || fields.Any(x => x != null && x.IndexOf(f, StringComparison.OrdinalIgnoreCase) >= 0);
 
-            culpritList.BeginUpdate();
-            culpritList.Items.Clear();
-            foreach (var c in result.Culprits)
+            var cs = result.Culprits.Where(c => matches(new[] { c.Path, c.Label, c.Contents, c.Note, c.HiddenReason })).ToList();
+            var areas = result.Areas.OrderByDescending(a => a.CurrentBytes).Where(a => matches(new[] { a.Name, a.Explanation, a.Activity, a.Drive })).ToList();
+            results.SetResults(cs, areas);
+            if (cs.Count == 0 && areas.Count == 0)
             {
-                if (!matches(new[] { c.Path, c.Label, c.Contents, c.Note, c.HiddenReason })) continue;
-                string added = c.AddedBytes > 0 ? Format.Bytes(c.AddedBytes) : "";
-                if (c.PossibleBytes > 0)
-                    added += (added.Length > 0 ? " + " : "") + "up to " + Format.Bytes(c.PossibleBytes) + "?";
-                string when = c.Kind == CulpritKind.SystemArea ? "since last scan" :
-                              c.FirstUtc == c.LastUtc || Format.When(c.FirstUtc) == Format.When(c.LastUtc) ? Format.When(c.LastUtc)
-                              : Format.When(c.FirstUtc) + " → " + Format.When(c.LastUtc);
-                var noteParts = new List<string>();
-                if (!string.IsNullOrEmpty(c.Note)) noteParts.Add(c.Note);
-                if (!string.IsNullOrEmpty(c.HiddenReason) && c.Kind == CulpritKind.Folder) noteParts.Add(c.HiddenReason);
-                if (c.Confidence != "High" && c.Kind != CulpritKind.Scattered) noteParts.Add(c.Confidence + " confidence: includes existing files that were modified");
-
-                var item = new ListViewItem(new[]
+                results.State = ListMood.Empty;
+                if (f.Length > 0)
                 {
-                    c.Kind == CulpritKind.Scattered ? "" : c.Rank.ToString(),
-                    Format.Percent(c.Likelihood),
-                    added,
-                    c.Path,
-                    c.Label,
-                    c.Contents,
-                    when,
-                    string.Join(" · ", noteParts)
-                }, rankedGroup) { Tag = c };
-                if (c.Rank == 1)
-                {
-                    item.Font = new Font(culpritList.Font, FontStyle.Bold);
-                    item.ForeColor = Accent;
+                    results.MoodTitle = "Nothing matches “" + f + "”.";
+                    results.MoodText = "Try a shorter word, or clear the filter.";
                 }
-                if (c.Kind == CulpritKind.Scattered) item.ForeColor = Muted;
-                culpritList.Items.Add(item);
-            }
-
-            foreach (var a in result.Areas.OrderByDescending(a => a.CurrentBytes))
-            {
-                if (!matches(new[] { a.Name, a.Explanation, a.Activity, a.Drive })) continue;
-                string change = a.Delta.HasValue
-                    ? (a.Delta.Value == 0 ? "no change" : Format.SignedBytes(a.Delta.Value))
-                    : "—";
-                var item = new ListViewItem(new[]
+                else
                 {
-                    "",
-                    "",
-                    change,
-                    a.Drive + " " + a.Name,
-                    "Uses " + Format.Bytes(a.CurrentBytes) + " right now",
-                    "",
-                    a.PreviousUtc.HasValue ? "vs. " + Format.When(a.PreviousUtc.Value) : "first scan",
-                    a.Activity ?? ""
-                }, areaGroup) { Tag = a };
-                if (a.ActiveInWindow || (a.Delta.HasValue && a.Delta.Value > 0)) item.ForeColor = Warn;
-                culpritList.Items.Add(item);
+                    results.MoodTitle = "Your drive's been calm.";
+                    results.MoodText = "Nothing big showed up in the " + Format.Window(result.Window) + ". Try a longer window if you're still missing space.";
+                }
+                results.Invalidate();
             }
-            culpritList.EndUpdate();
+            ShowDetails();
         }
 
         void ShowDetails()
         {
-            fileList.BeginUpdate();
-            fileList.Items.Clear();
-            if (culpritList.SelectedItems.Count == 0)
-            {
-                detailBox.Text = "";
-                fileList.EndUpdate();
-                return;
-            }
-            var tag = culpritList.SelectedItems[0].Tag;
+            object tag = results.SelectedTag;
+            SystemArea area = null;
             var c = tag as Culprit;
-            var a = tag as SystemArea;
-            var lines = new List<string>();
-
-            if (c != null)
-            {
-                lines.Add(c.Kind == CulpritKind.Folder ? c.Path : c.Label);
-                if (c.Kind == CulpritKind.Folder)
-                    lines.Add(c.Label + (string.IsNullOrEmpty(c.Contents) ? "" : "  ·  " + c.Contents));
-                else if (!string.IsNullOrEmpty(c.Contents))
-                    lines.Add(c.Contents);
-
-                var stats = new List<string>();
-                if (c.AddedBytes > 0) stats.Add(Format.Bytes(c.AddedBytes) + " added");
-                if (c.PossibleBytes > 0) stats.Add("plus existing files that grew (now " + Format.Bytes(c.PossibleBytes) + " in total; their earlier size isn't known yet)");
-                if (c.NewFiles > 0) stats.Add(c.NewFiles.ToString("N0") + " new file" + (c.NewFiles == 1 ? "" : "s"));
-                if (c.GrewFiles > 0) stats.Add(c.GrewFiles.ToString("N0") + " existing file" + (c.GrewFiles == 1 ? "" : "s") + " grew");
-                stats.Add("Likelihood " + Format.Percent(c.Likelihood) + " (" + c.Confidence.ToLowerInvariant() + " confidence)");
-                lines.Add(string.Join("  ·  ", stats));
-                var extra = new[] { c.Note, c.Kind == CulpritKind.Folder ? c.HiddenReason : null }.Where(x => !string.IsNullOrEmpty(x));
-                if (extra.Any()) lines.Add(string.Join("  ·  ", extra));
-
-                foreach (var f in c.Files) fileList.Items.Add(FileItem(f));
-                if (c.Kind == CulpritKind.SystemArea)
-                {
-                    var area = result.Areas.FirstOrDefault(x => x.Drive + " " + x.Name == c.Path);
-                    if (area != null && !string.IsNullOrEmpty(area.Explanation)) lines.Add(area.Explanation);
-                }
-            }
-            else if (a != null)
-            {
-                lines.Add(a.Drive + " " + a.Name + " — uses " + Format.Bytes(a.CurrentBytes));
-                if (a.Delta.HasValue)
-                    lines.Add((a.Delta.Value == 0 ? "No change" : Format.SignedBytes(a.Delta.Value)) + " since your last scan (" + Format.When(a.PreviousUtc.Value) + ")");
-                else
-                    lines.Add("First time this was measured. Next scan will show how much it changed.");
-                if (!string.IsNullOrEmpty(a.Activity)) lines.Add(a.Activity);
-                if (!string.IsNullOrEmpty(a.Explanation)) lines.Add(a.Explanation);
-            }
-            detailBox.Text = string.Join(Environment.NewLine, lines);
-            fileList.EndUpdate();
-        }
-
-        static ListViewItem FileItem(ChangedFile f)
-        {
-            string change;
-            switch (f.Kind)
-            {
-                case ChangeKind.New: change = "New file"; break;
-                case ChangeKind.GrewKnown: change = "Grew " + Format.SignedBytes(f.AddedBytes); break;
-                default: change = "Modified (grew)"; break;
-            }
-            return new ListViewItem(new[]
-            {
-                f.Name,
-                Format.Bytes(f.SizeOnDisk),
-                change,
-                Format.When(f.TimeUtc),
-                f.Folder
-            }) { Tag = f };
+            if (c != null && c.Kind == CulpritKind.SystemArea && result != null)
+                area = result.Areas.FirstOrDefault(x => x.Drive + " " + x.Name == c.Path);
+            detail.SetItem(tag, area);
         }
 
         // ---------------- Actions ----------------
@@ -616,10 +485,8 @@ namespace SpaceSleuth.UI
             return null;
         }
 
-        void OpenSelected(ListView lv)
+        void OpenTag(object tag)
         {
-            if (lv == null || lv.SelectedItems.Count == 0) return;
-            var tag = lv.SelectedItems[0].Tag;
             string target = OpenTargetFor(tag);
             if (target == null) return;
             try
@@ -633,26 +500,22 @@ namespace SpaceSleuth.UI
             }
             catch (Exception ex)
             {
-                MessageBox.Show(this, "Couldn't open it: " + ex.Message, "Space Sleuth", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                SetStatus("Couldn't open that one: " + ex.Message, true);
             }
         }
 
-        void CopySelected(ListView lv)
+        void CopyTag(object tag)
         {
-            if (lv == null || lv.SelectedItems.Count == 0) return;
-            string p = PathFor(lv.SelectedItems[0].Tag);
+            string p = PathFor(tag);
             if (p == null) return;
             try
             {
                 Clipboard.SetText(p);
-                SetStatus("Copied: " + p, true);
+                SetStatus("Nice — copied: " + p, true);
             }
             catch
             {
             }
         }
-
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-        static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, string lParam);
     }
 }

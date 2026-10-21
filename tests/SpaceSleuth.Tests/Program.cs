@@ -164,6 +164,17 @@ static class Tests
         Check(!Labeler.IsGenericContainer(@"C:\Users\me\AppData\Local\Google"), "an app folder is not a container");
         Check(Labeler.HiddenReasonFromPath(@"C:\ProgramData\Native Instruments") != null, "ProgramData flagged as hidden");
         Check(Labeler.HiddenReasonFromPath(@"D:\Music\Samples") == null, "normal folder not flagged");
+
+        Console.WriteLine("Categories");
+        Func<string, string, Category> cat = (path, contents) =>
+            Labeler.CategoryOf(new Culprit { Kind = CulpritKind.Folder, Path = path, Label = Labeler.Describe(path), Contents = contents });
+        Check(cat(@"C:\Users\Public\Documents\Libs\Strings", "Mostly audio samples / instrument data (.ncw 100%)") == Category.Libraries, "sample library -> Libraries");
+        Check(cat(@"C:\Users\me\Downloads", "Mostly installers (.exe 80%)") == Category.YourFiles, "Downloads -> Your files");
+        Check(cat(@"C:\Program Files\CoolSynth", "Mostly program files (.dll 100%)") == Category.Programs, "program -> Apps & programs");
+        Check(cat(@"D:\SteamLibrary\steamapps\common\Elden Ring", "Mostly game data (.pak 90%)") == Category.Games, "Steam -> Games");
+        Check(cat(@"C:\Users\me\AppData\Local\Google\Chrome\User Data\Default\Cache", "") == Category.Caches, "Chrome cache -> Caches");
+        Check(cat(@"C:\Windows\SoftwareDistribution\Download", "") == Category.System, "Windows Update -> System");
+        Check(Labeler.FriendlyName(new Culprit { Kind = CulpritKind.Folder, Path = @"C:\Users\Public\Documents\Libs\Strings" }) == "Strings", "friendly name is the folder's own name");
     }
 
     static void FormatChecks()

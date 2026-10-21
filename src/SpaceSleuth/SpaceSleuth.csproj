@@ -31,4 +31,9 @@
     <Reference Include="System.Management" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Unbounded Black (SIL Open Font License, see /licenses) for the wordmark -->
+    <EmbeddedResource Include="Assets\Unbounded-Black.ttf" LogicalName="SpaceSleuth.Unbounded.ttf" />
+  </ItemGroup>
+
 </Project>

@@ -219,6 +219,56 @@ namespace SpaceSleuth.Core
             return null;
         }
 
+        // ---- Categories (each gets one consistent color in the UI) ----
+
+        static readonly Regex GameLabel = new Regex(@"steam|epic games|xbox|game|gog|battle\.net|riot|ubisoft|microsoft store apps", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        static readonly Regex CacheLabel = new Regex(@"temp files|cache|crash dump|error reporting|internet cache|logs", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        static readonly Regex SystemLabel = new Regex(@"^(windows|recycle bin|system restore|previous windows|installer package|delivery optimization)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        static readonly Regex StudioLabel = new Regex(@"splice|native|kontakt|spitfire|ableton|fl studio|arturia|spectrasonics|toontrack|eastwest|uvi|heavyocity|orchestral|steinberg|izotope|waves|plugin|slate|universal audio|xfer|loopcloud|presonus|bitwig|reason|avid|aax|audio|shared public folder", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+        static readonly Regex PersonalLabel = new Regex(@"^(downloads|desktop|documents|music|videos|pictures|user folder|onedrive|dropbox|google drive|icloud)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+        public static Category CategoryOf(Culprit c)
+        {
+            if (c == null) return Category.Programs;
+            if (c.Kind == CulpritKind.SystemArea) return Category.System;
+            if (c.Kind == CulpritKind.Scattered) return Category.Caches;
+            string label = c.Label ?? "";
+            string contents = c.Contents ?? "";
+            if (SystemLabel.IsMatch(label)) return Category.System;
+            if (CacheLabel.IsMatch(label)) return Category.Caches;
+            if (GameLabel.IsMatch(label)) return Category.Games;
+            if (StudioLabel.IsMatch(label) || contents.StartsWith("Mostly audio") || contents.StartsWith("Mostly video") || contents.StartsWith("Mostly images"))
+                return Category.Libraries;
+            if (PersonalLabel.IsMatch(label)) return Category.YourFiles;
+            if (contents.StartsWith("Mostly game data")) return Category.Games;
+            return Category.Programs;
+        }
+
+        public static string CategoryName(Category c)
+        {
+            switch (c)
+            {
+                case Category.YourFiles: return "Your files";
+                case Category.Libraries: return "Libraries & media";
+                case Category.Programs: return "Apps & programs";
+                case Category.Games: return "Games";
+                case Category.Caches: return "Caches & temp";
+                default: return "System";
+            }
+        }
+
+        /// <summary>Short, human name for a culprit card: the folder's own name rather than the whole path.</summary>
+        public static string FriendlyName(Culprit c)
+        {
+            if (c == null) return "";
+            if (c.Kind == CulpritKind.Scattered) return "Little bits everywhere";
+            if (c.Kind == CulpritKind.SystemArea) return c.Label;
+            string p = (c.Path ?? "").TrimEnd('\\');
+            int i = p.LastIndexOf('\\');
+            if (i < 0) return p.Length == 2 ? p + "\\ (top of the drive)" : p;
+            return p.Substring(i + 1);
+        }
+
         // ---- What kind of files are these? ----
 
         static readonly Dictionary<string, string> Categories = BuildCategories();

@@ -12,7 +12,13 @@ You had 250 GB free this morning and 238 GB now. Space Sleuth looks at what chan
 | 4 | <1% | 100 MB | `C:\Program Files\CoolSynth` | Installed program: CoolSynth |
 | | 3% | 1.1 GB | Many small changes in different folders | App updates, caches, logs |
 
-Click any row to see the individual files. Double-click to open it in File Explorer.
+Click any card to see the individual files. Double-click to open it in File Explorer.
+
+![Space Sleuth preview (sample data)](docs/preview.png)
+
+## Look & feel
+
+Cream paper, oxblood ink and candy-colored stickers. Each kind of place keeps one color everywhere: **orange** = libraries & media (sample packs, video), **sky** = your files, **indigo** = apps & programs, **pink** = games, **mint** = caches & temp, **purple** = system space. A little pebble mascot with a magnifying glass keeps you company while it looks around. If you've turned off animation effects in Windows, nothing bobs or slides.
 
 ## Download
 
@@ -42,3 +48,7 @@ dotnet build src/SpaceSleuth/SpaceSleuth.csproj -c Release -o out
 ```
 
 The app targets .NET Framework 4.8, which is built into Windows 11, so the .exe has no dependencies.
+
+## Credits
+
+The wordmark uses [Unbounded](https://github.com/googlefonts/unbounded) (SIL Open Font License, see `licenses/Unbounded-OFL.txt`), embedded in the app. Everything else uses Windows' own Segoe UI.

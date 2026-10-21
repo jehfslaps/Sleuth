@@ -187,8 +187,8 @@ namespace SpaceSleuth.Core
             {
                 var c = Build(scatteredFiles, opt, opt.UnknownGrowthWeight);
                 c.Kind = CulpritKind.Scattered;
-                c.Path = "Many small changes in different folders";
-                c.Label = "Small changes spread around (app updates, caches, logs)";
+                c.Path = "Lots of small changes in different folders";
+                c.Label = "Little bits spread around \u2014 app updates, caches, logs";
                 c.Note = "Each folder here added less than " + Format.Bytes((long)threshold);
                 if (c.Score > 0) result.Add(c);
             }
