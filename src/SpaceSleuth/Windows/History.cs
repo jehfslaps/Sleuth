@@ -131,6 +131,11 @@ namespace SpaceSleuth.Windows
                         .OrderByDescending(s => s.Utc).FirstOrDefault();
         }
 
+        public DateTime? LatestScanUtc()
+        {
+            return scans.Count == 0 ? (DateTime?)null : scans.Max(s => s.Utc);
+        }
+
         public void AddScan(string drive, DateTime utc, long free)
         {
             scans.Add(new ScanRecord { Drive = drive, Utc = utc, FreeBytes = free });

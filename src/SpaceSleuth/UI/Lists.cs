@@ -394,8 +394,12 @@ namespace SpaceSleuth.UI
             float x = r.X + Theme.S(80), right = r.Right - rightW - Theme.S(16);
 
             // Right: amount + likelihood bar
-            string amount = c.AddedBytes > 0 ? Format.Bytes(c.AddedBytes) : c.PossibleBytes > 0 ? "up to " + Format.Bytes(c.PossibleBytes) : "—";
-            var amountFont = Theme.Ui(c.AddedBytes > 0 ? 24 : 17, c.AddedBytes > 0 ? Weight.Semibold : Weight.Medium);
+            string amount = c.AddedBytes > 0 ? Format.Bytes(c.AddedBytes)
+                          : c.EstimateBytes > 0 ? "~" + Format.Bytes(c.EstimateBytes)
+                          : c.PossibleBytes > 0 ? "up to " + Format.Bytes(c.PossibleBytes)
+                          : c.Kind == CulpritKind.SystemArea ? "about the same" : "\u2014";
+            bool big = c.AddedBytes > 0 || c.EstimateBytes > 0;
+            var amountFont = Theme.Ui(big ? 24 : 17, big ? Weight.Semibold : Weight.Medium);
             var rr = new RectangleF(r.Right - rightW - Theme.S(20), r.Y + Theme.S(16), rightW, Theme.S(34));
             Theme.Text(g, amount, amountFont, hue.Dark, rr, StringAlignment.Far);
             float bw = Theme.S(124), bh = Theme.S(8);
@@ -442,6 +446,8 @@ namespace SpaceSleuth.UI
             else
             {
                 chips.Add(Pair("System", Theme.HPurple));
+                if (c.NewFiles > 0) chips.Add(Pair(c.NewFiles == 1 ? "New restore point" : c.NewFiles + " new restore points", Theme.HOrange));
+                if (c.EstimateBytes > 0) chips.Add(Pair("Estimate", Theme.HNeutral));
             }
             chips.Add(Pair(WhenText(c), Theme.HNeutral));
             foreach (var chip in chips)

@@ -67,6 +67,23 @@ namespace SpaceSleuth.Windows
         /// <summary>Files at least this big are remembered between scans so their exact growth can be measured.</summary>
         public const long BigFileBytes = 256L * 1024 * 1024;
 
+        /// <summary>
+        /// When Space Sleuth last scanned. With drives given, the earliest last scan among those drives
+        /// (so nothing is missed on any of them); with null, the most recent scan of any drive.
+        /// </summary>
+        public static DateTime? LastScanUtc(IEnumerable<string> drives)
+        {
+            var history = History.Load();
+            if (drives == null) return history.LatestScanUtc();
+            DateTime? earliest = null;
+            foreach (var d in drives)
+            {
+                var s = history.LastScan(d);
+                if (s != null && (!earliest.HasValue || s.Utc < earliest.Value)) earliest = s.Utc;
+            }
+            return earliest;
+        }
+
         public static List<DriveChoice> AvailableDrives()
         {
             var list = new List<DriveChoice>();

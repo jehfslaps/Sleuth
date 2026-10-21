@@ -131,24 +131,32 @@ namespace SpaceSleuth.Windows
                 shadows.CreatedByVolume.TryGetValue(guid, out created);
                 var recent = (created ?? new List<DateTime>()).Where(t => t >= cutoffUtc).OrderBy(t => t).ToList();
 
-                if (hasStorage || recent.Count > 0)
+                // Named restore points (System Restore keeps these on the Windows drive). Whether you made one
+                // yourself or Windows made it automatically before an update, it shows up the same way.
+                var rps = isSystemDrive
+                    ? shadows.RestorePoints.Where(r => r.Key >= cutoffUtc).OrderByDescending(r => r.Key).ToList()
+                    : new List<KeyValuePair<DateTime, string>>();
+                int newCount = Math.Max(recent.Count, rps.Count);
+
+                if (hasStorage || newCount > 0)
                 {
                     var activity = new List<string>();
                     if (recent.Count > 0)
                         activity.Add(recent.Count + (recent.Count == 1 ? " new restore point / shadow copy" : " new restore points / shadow copies")
                                      + " in this window (latest " + Format.When(recent.Last()) + ")");
-                    if (isSystemDrive)
-                    {
-                        var rps = shadows.RestorePoints.Where(r => r.Key >= cutoffUtc).OrderByDescending(r => r.Key).Take(5).ToList();
-                        if (rps.Count > 0)
-                            activity.Add("Restore points: " + string.Join("; ", rps.Select(r => "\"" + r.Value + "\" " + Format.When(r.Key))));
-                    }
-                    list.Add(Make(drive, "shadow", "System Restore points / shadow copies", used, history,
+                    if (rps.Count > 0)
+                        activity.Add("Restore points: " + string.Join("; ", rps.Take(5).Select(r => "\"" + r.Value + "\" " + Format.When(r.Key))));
+                    var area = Make(drive, "shadow", "System Restore points / shadow copies", used, history,
                         "Windows keeps restore points and shadow copies in a hidden area of the drive" +
                         (max > 0 ? ", and is allowed to use up to " + Format.Bytes(max) + " for them" : "") +
                         ". Manage or shrink this in System Protection > Configure.",
                         "SystemPropertiesProtection.exe",
-                        string.Join(". ", activity), recent.Count > 0));
+                        string.Join(". ", activity), newCount > 0);
+                    area.NewInWindow = newCount;
+                    area.TotalCount = Math.Max(created == null ? 0 : created.Count, isSystemDrive ? shadows.RestorePoints.Count : 0);
+                    var latest = recent.Concat(rps.Select(r => r.Key)).DefaultIfEmpty().Max();
+                    if (newCount > 0 && latest != default(DateTime)) area.LatestNewUtc = latest;
+                    list.Add(area);
                 }
             }
 

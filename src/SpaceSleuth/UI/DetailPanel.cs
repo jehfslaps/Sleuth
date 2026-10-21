@@ -92,10 +92,14 @@ namespace SpaceSleuth.UI
                               " in total). Their earlier size isn't known yet, so this part is a guess — your next scan can measure it exactly.");
                 info = string.Join("\n", lines);
 
-                if (c.AddedBytes > 0 || c.PossibleBytes == 0)
-                    AddStat("ADDED", c.AddedBytes > 0 ? Format.Bytes(c.AddedBytes) : "—", Theme.Forest, Theme.Lime);
-                else
+                if (c.AddedBytes > 0)
+                    AddStat("ADDED", Format.Bytes(c.AddedBytes), Theme.Forest, Theme.Lime);
+                else if (c.EstimateBytes > 0)
+                    AddStat("ABOUT (ESTIMATE)", "~" + Format.Bytes(c.EstimateBytes), Theme.Forest, Theme.Lime);
+                else if (c.PossibleBytes > 0)
                     AddStat("MAYBE", "up to " + Format.Bytes(c.PossibleBytes), Theme.Forest, Theme.Lime);
+                else
+                    AddStat("ADDED", c.Kind == CulpritKind.SystemArea ? "~0" : "\u2014", Theme.Forest, Theme.Lime);
                 if (c.Kind == CulpritKind.SystemArea && areaOfCulprit != null)
                     AddStat("USES NOW", Format.Bytes(areaOfCulprit.CurrentBytes), Theme.Indigo, Color.White);
                 else

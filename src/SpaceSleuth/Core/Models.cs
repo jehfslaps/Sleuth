@@ -76,6 +76,8 @@ namespace SpaceSleuth.Core
         public string Contents;
         public long AddedBytes;
         public long PossibleBytes;
+        /// <summary>A rough estimate when the exact amount can't be known yet (e.g. a brand-new restore point on a first scan).</summary>
+        public long EstimateBytes;
         public double Score;
         /// <summary>Share (0..1) of all the growth found. This is the "likelihood" shown to the user.</summary>
         public double Likelihood;
@@ -106,6 +108,10 @@ namespace SpaceSleuth.Core
         /// <summary>Something that happened in the window, e.g. "Restore point created 3:12 PM".</summary>
         public string Activity;
         public bool ActiveInWindow;
+        /// <summary>Restore points / shadow copies: how many were made in the window, how many exist, and when the latest was made.</summary>
+        public int NewInWindow;
+        public int TotalCount;
+        public DateTime? LatestNewUtc;
         public string Explanation;
         public string OpenTarget;
 

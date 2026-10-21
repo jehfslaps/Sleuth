@@ -132,6 +132,30 @@ static class Tests
         Print(r);
         Check(r[0].Kind == CulpritKind.SystemArea && r[0].AddedBytes == 8 * GB, "restore points rank #1");
         Check(r.Count == 2, "unchanged hibernation file is not listed as a culprit");
+
+        Console.WriteLine("Scenario: first scan ever, Windows made a restore point overnight (no earlier size to compare)");
+        var firstScan = new[]
+        {
+            new SystemArea { Drive = "C:", Key = "shadow", Name = "System Restore points / shadow copies", CurrentBytes = 20 * GB,
+                             NewInWindow = 1, TotalCount = 4, ActiveInWindow = true, LatestNewUtc = Now.AddHours(-9) },
+        };
+        var r2 = Analyzer.Analyze(new List<ChangedFile> { New(@"C:\Users\me\Downloads\song.wav", 1 * GB) }, null, firstScan, new AnalyzerOptions());
+        Print(r2);
+        var rp = r2.FirstOrDefault(c => c.Kind == CulpritKind.SystemArea);
+        Check(rp != null, "a brand-new restore point is in the ranked list even on a first scan");
+        Check(rp != null && rp.EstimateBytes == 5 * GB, "its size is estimated as the average restore point (20 GB / 4)");
+        Check(rp != null && rp.Rank == 1, "and it ranks above the 1 GB download");
+
+        Console.WriteLine("Scenario: a restore point was made but Windows deleted an older one, so the total didn't change");
+        var replaced = new[]
+        {
+            new SystemArea { Drive = "C:", Key = "shadow", Name = "System Restore points / shadow copies", CurrentBytes = 20 * GB, PreviousBytes = 20 * GB,
+                             PreviousUtc = Now.AddHours(-30), NewInWindow = 1, TotalCount = 4, ActiveInWindow = true },
+        };
+        var r3 = Analyzer.Analyze(new List<ChangedFile> { New(@"C:\Users\me\Downloads\song.wav", 1 * GB) }, null, replaced, new AnalyzerOptions());
+        Print(r3);
+        Check(r3.Any(c => c.Kind == CulpritKind.SystemArea), "it is still listed so you know it happened");
+        Check(r3[0].Kind == CulpritKind.Folder, "but it doesn't outrank space that was really added");
     }
 
     static void NoiseScenario()

@@ -17,16 +17,19 @@ namespace SpaceSleuth.UI
     {
         static readonly KeyValuePair<string, TimeSpan>[] TimeWindows =
         {
+            // Zero = "since your last scan", worked out from the saved history when you press the button.
+            new KeyValuePair<string, TimeSpan>("Since last scan", TimeSpan.Zero),
             new KeyValuePair<string, TimeSpan>("6h", TimeSpan.FromHours(6)),
             new KeyValuePair<string, TimeSpan>("12h", TimeSpan.FromHours(12)),
             new KeyValuePair<string, TimeSpan>("24h", TimeSpan.FromHours(24)),
             new KeyValuePair<string, TimeSpan>("48h", TimeSpan.FromHours(48)),
-            new KeyValuePair<string, TimeSpan>("3 days", TimeSpan.FromDays(3)),
-            new KeyValuePair<string, TimeSpan>("7 days", TimeSpan.FromDays(7)),
-            new KeyValuePair<string, TimeSpan>("14 days", TimeSpan.FromDays(14)),
-            new KeyValuePair<string, TimeSpan>("30 days", TimeSpan.FromDays(30)),
+            new KeyValuePair<string, TimeSpan>("3d", TimeSpan.FromDays(3)),
+            new KeyValuePair<string, TimeSpan>("7d", TimeSpan.FromDays(7)),
+            new KeyValuePair<string, TimeSpan>("14d", TimeSpan.FromDays(14)),
+            new KeyValuePair<string, TimeSpan>("30d", TimeSpan.FromDays(30)),
         };
 
+        const int Default48h = 4;
         const string FindText = "Find my space";
         const string StopText = "Stop looking";
 
@@ -50,6 +53,7 @@ namespace SpaceSleuth.UI
         List<DriveChoice> drives = new List<DriveChoice>();
         DriveChoice chosenDrive; // null = all drives
         ScanResult result;
+        string windowPhrase = "in the last 48 hours";
         CancellationTokenSource cts;
         DateTime lastStatus = DateTime.MinValue;
 
@@ -69,10 +73,13 @@ namespace SpaceSleuth.UI
             Size = new Size(Math.Min(Theme.Si(1340), work.Width - 40), Math.Min(Theme.Si(940), work.Height - 40));
             MinimumSize = new Size(Theme.Si(1000), Theme.Si(640));
 
-            windowPicker = new Segmented(TimeWindows.Select(w => w.Key).ToArray(), 3);
+            // If you've scanned before, pick up exactly where you left off.
+            DateTime? previous = null;
+            try { previous = ScanEngine.LastScanUtc(null); } catch { }
+            windowPicker = new Segmented(TimeWindows.Select(w => w.Key).ToArray(), previous.HasValue ? 0 : Default48h);
             toolbar = new Toolbar();
             toolbar.Controls.AddRange(new Control[] { windowPicker, drivePicker, thorough, findButton, filter });
-            tips.SetToolTip(windowPicker, "How far back to look");
+            tips.SetToolTip(windowPicker, "How far back to look. \u201cSince last scan\u201d covers everything since you last ran Space Sleuth.");
             tips.SetToolTip(thorough, "Also checks the dates on every file, not just Windows' change log.\nSlower, but catches anything the change log has already forgotten.");
             tips.SetToolTip(drivePicker, "Which drive to look at");
 
@@ -170,9 +177,14 @@ namespace SpaceSleuth.UI
             place(drivePicker, Math.Max(drivePicker.PreferredWidth(), Theme.Si(130)));
             place(thorough, thorough.PreferredWidth());
             place(findButton, findButton.PreferredWidth());
-            int filterW = Math.Max(Theme.Si(180), maxX - x);
-            if (filterW > Theme.Si(380)) { filter.SetBounds(maxX - Theme.Si(300), ty, Theme.Si(300), rowH); }
-            else place(filter, Math.Max(Theme.Si(180), Math.Min(filterW, Theme.Si(300))));
+            // Filter box: right-aligned on the same row if there's room for at least a small one, otherwise on its own row.
+            int room = maxX - x;
+            if (room >= Theme.Si(120))
+            {
+                int fw = Math.Min(room, Theme.Si(300));
+                filter.SetBounds(maxX - fw, ty, fw, rowH);
+            }
+            else place(filter, Theme.Si(240));
             toolbar.SetBounds(0, y, W, ty + rowH + Theme.Si(2));
             y = toolbar.Bottom + Theme.Si(10);
 
@@ -289,10 +301,30 @@ namespace SpaceSleuth.UI
                 return;
             }
 
-            var window = TimeWindows[Math.Max(0, windowPicker.SelectedIndex)].Value;
-            var opt = new ScanOptions { Window = window, Thorough = thorough.Checked };
+            var opt = new ScanOptions { Thorough = thorough.Checked };
             if (chosenDrive != null) opt.Drives.Add(chosenDrive.Drive);
             else opt.Drives.AddRange(drives.Select(d => d.Drive));
+
+            var window = TimeWindows[Math.Max(0, windowPicker.SelectedIndex)].Value;
+            if (window == TimeSpan.Zero)
+            {
+                DateTime? last = null;
+                try { last = ScanEngine.LastScanUtc(opt.Drives); } catch { }
+                if (last.HasValue)
+                {
+                    // A few minutes of overlap so nothing slips between scans; always look back at least an hour.
+                    window = DateTime.UtcNow - last.Value + TimeSpan.FromMinutes(5);
+                    if (window < TimeSpan.FromHours(1)) window = TimeSpan.FromHours(1);
+                    windowPhrase = "since your last scan (" + Format.When(last.Value) + ")";
+                }
+                else
+                {
+                    window = TimeSpan.FromHours(48);
+                    windowPhrase = "in the last 48 hours (no earlier scan yet)";
+                }
+            }
+            else windowPhrase = "in the " + Format.Window(window);
+            opt.Window = window;
             if (opt.Drives.Count == 0)
             {
                 headline.Plain = "Hmm — there are no drives to look at.";
@@ -310,7 +342,7 @@ namespace SpaceSleuth.UI
             results.Clear();
             results.State = ListMood.Scanning;
             results.MoodTitle = "Looking around…";
-            results.MoodText = "Checking " + string.Join(", ", opt.Drives) + " for the " + Format.Window(window) + ". This usually takes a few seconds.";
+            results.MoodText = "Checking " + string.Join(", ", opt.Drives) + " for what changed " + windowPhrase + ". This usually takes a few seconds.";
             detail.MascotMood = Mood.Searching;
             detail.PlaceholderTitle = "Hang tight \u2014 cards show up in a moment.";
             detail.SetItem(null, null);
@@ -392,7 +424,6 @@ namespace SpaceSleuth.UI
         void ShowResult()
         {
             var r = result;
-            string window = Format.Window(r.Window);
             var top = r.Culprits.FirstOrDefault(c => c.Kind != CulpritKind.Scattered);
 
             if (top == null)
@@ -400,10 +431,14 @@ namespace SpaceSleuth.UI
                                                   : "Just little bits here and there — nothing big.", null, null);
             else if (top.AddedBytes > 0)
                 SetHeadline(null, Format.Bytes(top.AddedBytes), top.Kind == CulpritKind.Folder ? LastSegment(top.Path) : top.Label);
+            else if (top.EstimateBytes > 0)
+                SetHeadline(null, "~" + Format.Bytes(top.EstimateBytes), "a new restore point");
+            else if (top.Kind == CulpritKind.SystemArea)
+                SetHeadline("A new restore point was made, but your free space barely changed.", null, null);
             else
                 SetHeadline("Most likely, an existing file grew in " + LastSegment(top.Path) + ".", null, null);
 
-            headline.Chips.Add(new KeyValuePair<string, Hue>(Format.Bytes(r.TotalAdded) + " new in the " + window, Theme.HSky));
+            headline.Chips.Add(new KeyValuePair<string, Hue>(Format.Bytes(r.TotalAdded) + " new " + windowPhrase, Theme.HSky));
             foreach (var d in r.Drives)
             {
                 headline.Chips.Add(new KeyValuePair<string, Hue>(d.Drive + " has " + Format.Bytes(d.FreeBytes) + " free", Theme.HMint));
@@ -446,7 +481,7 @@ namespace SpaceSleuth.UI
                 else
                 {
                     results.MoodTitle = "Your drive's been calm.";
-                    results.MoodText = "Nothing big showed up in the " + Format.Window(result.Window) + ". Try a longer window if you're still missing space.";
+                    results.MoodText = "Nothing big showed up " + windowPhrase + ". Try a longer window if you're still missing space.";
                 }
                 results.Invalidate();
             }

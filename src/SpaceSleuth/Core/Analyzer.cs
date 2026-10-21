@@ -76,14 +76,19 @@ namespace SpaceSleuth.Core
                 }
             }
 
-            var areaList = (areas ?? Enumerable.Empty<SystemArea>())
-                .Where(a => a.Delta.HasValue && a.Delta.Value >= 1024L * 1024)
-                .ToList();
+            // System areas that belong in the ranking: anything that grew since the last scan, plus any
+            // restore point made during the window (even on a first scan, or when the total barely moved).
+            var areaCulprits = new List<Culprit>();
+            foreach (var a in areas ?? Enumerable.Empty<SystemArea>())
+            {
+                var c = AreaCulprit(a);
+                if (c != null) areaCulprits.Add(c);
+            }
 
             Func<Node, double> score = n => n.Added + opt.UnknownGrowthWeight * n.Possible;
-            double total = score(root) + areaList.Sum(a => (double)a.Delta.Value);
+            double total = score(root) + areaCulprits.Sum(c => c.Score);
             var result = new List<Culprit>();
-            if (total <= 0) return result;
+            if (total <= 0 && areaCulprits.Count == 0) return result;
 
             double threshold = Math.Max(opt.MinBytes, total * opt.MinShare);
             var scattered = new List<Node>();
@@ -150,25 +155,7 @@ namespace SpaceSleuth.Core
             };
             process(root);
 
-            foreach (var a in areaList)
-            {
-                var c = new Culprit
-                {
-                    Kind = CulpritKind.SystemArea,
-                    Path = a.Drive + " " + a.Name,
-                    Label = a.Name,
-                    Contents = a.Explanation,
-                    AddedBytes = a.Delta.Value,
-                    Score = a.Delta.Value,
-                    Confidence = "High",
-                    LastUtc = DateTime.UtcNow,
-                    FirstUtc = a.PreviousUtc ?? DateTime.UtcNow,
-                    HiddenReason = "Not visible as normal files",
-                    OpenTarget = a.OpenTarget,
-                    Note = "Grew since your last scan" + (string.IsNullOrEmpty(a.Activity) ? "" : ". " + a.Activity)
-                };
-                result.Add(c);
-            }
+            result.AddRange(areaCulprits);
 
             result = result.OrderByDescending(c => c.Score).ThenByDescending(c => c.LastUtc).ToList();
 
@@ -196,9 +183,65 @@ namespace SpaceSleuth.Core
             for (int i = 0; i < result.Count; i++)
             {
                 result[i].Rank = i + 1;
-                result[i].Likelihood = result[i].Score / total;
+                result[i].Likelihood = total > 0 ? result[i].Score / total : 0;
             }
             return result;
+        }
+
+        static bool IsRestorePoints(SystemArea a)
+        {
+            return a.Key == "shadow";
+        }
+
+        /// <summary>Turns a system area into a ranked item, or null if it doesn't belong in the ranking.</summary>
+        static Culprit AreaCulprit(SystemArea a)
+        {
+            const long MB = 1024L * 1024;
+            bool grew = a.Delta.HasValue && a.Delta.Value >= MB;
+            bool newRestorePoint = IsRestorePoints(a) && a.NewInWindow > 0;
+            if (!grew && !newRestorePoint) return null;
+
+            var c = new Culprit
+            {
+                Kind = CulpritKind.SystemArea,
+                Path = a.Drive + " " + a.Name,
+                Label = a.Name,
+                Contents = a.Explanation,
+                LastUtc = a.LatestNewUtc ?? DateTime.UtcNow,
+                FirstUtc = a.PreviousUtc ?? a.LatestNewUtc ?? DateTime.UtcNow,
+                HiddenReason = "Not visible as normal files",
+                OpenTarget = a.OpenTarget,
+                NewFiles = a.NewInWindow
+            };
+            string activity = string.IsNullOrEmpty(a.Activity) ? "" : ". " + a.Activity;
+
+            if (grew)
+            {
+                c.AddedBytes = a.Delta.Value;
+                c.Score = a.Delta.Value;
+                c.Confidence = "High";
+                c.Note = "Grew since your last scan" + activity;
+            }
+            else if (a.Delta.HasValue)
+            {
+                // A restore point was made, but the total hardly changed: Windows usually deletes the oldest
+                // restore point to make room when the space set aside for them is full.
+                c.Score = 0;
+                c.Confidence = "Medium";
+                c.Note = "New restore point, but the total barely changed \u2014 Windows probably removed an older one to make room" + activity;
+            }
+            else
+            {
+                // First scan: Windows doesn't report the size of a single restore point, so estimate it as
+                // the average size of the restore points / shadow copies on this drive.
+                long estimate = a.TotalCount > 0 ? a.CurrentBytes / a.TotalCount : a.CurrentBytes;
+                c.EstimateBytes = estimate * a.NewInWindow;
+                if (c.EstimateBytes > a.CurrentBytes) c.EstimateBytes = a.CurrentBytes;
+                c.Score = c.EstimateBytes;
+                c.Confidence = "Low";
+                c.Note = "New restore point \u2014 exact size shows up after your next scan (this is an estimate)" + activity;
+            }
+            return c;
         }
 
         static Node Find(Node root, string path)
