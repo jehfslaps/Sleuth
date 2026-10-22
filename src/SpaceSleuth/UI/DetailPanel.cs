@@ -2,138 +2,179 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
+using System.Windows.Forms;
 using SpaceSleuth.Core;
 
 namespace SpaceSleuth.UI
 {
-    /// <summary>
-    /// The white card on the right: what the selected place is, three stat tiles, a gentle explanation,
-    /// buttons, and the files inside. Pebble the mascot peeks over its top edge.
-    /// </summary>
-    internal sealed class DetailPanel : Painted, IAnimated
+    /// <summary>A clickable word with an arrow: grotesk, ink, red underline on hover.</summary>
+    internal sealed class LinkWord : Painted
     {
-        sealed class Stat
+        bool hover;
+        public string Arrow = "↗";
+
+        public LinkWord(string text)
         {
-            public string Label, Value;
-            public Color Back, Fore;
+            Text = text;
+            TabStop = true;
+            Cursor = Cursors.Hand;
+            SetStyle(ControlStyles.Selectable, true);
         }
 
+        public int PreferredWidth()
+        {
+            using (var g = CreateGraphics())
+                return (int)Math.Ceiling(Theme.Width(g, Text + " " + Arrow, Theme.G(15, 600)) + Theme.S(8));
+        }
+
+        protected override void Draw(Graphics g)
+        {
+            float cy = Height / 2f;
+            var f = Theme.G(15, 600);
+            float w = Theme.Label(g, Text, f, hover ? Theme.Red : Theme.Ink, 0, cy);
+            Theme.Label(g, " " + Arrow, Theme.G(15, 500), hover ? Theme.Red : Theme.Ink, w - Theme.S(2), cy);
+            if (hover || (Focused && ShowFocusCues)) Theme.Rect(g, Theme.Red, 0, cy + Theme.S(11), w, Theme.S(1.5f));
+        }
+
+        protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
+        protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
+        protected override void OnTextChanged(EventArgs e) { Invalidate(); base.OnTextChanged(e); }
+        protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
+        protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Space || e.KeyCode == Keys.Enter) { OnClick(EventArgs.Empty); e.Handled = true; }
+            base.OnKeyDown(e);
+        }
+    }
+
+    /// <summary>fig. 03: what the selected place is, a spec list, actions, and the files inside.</summary>
+    internal sealed class DetailPanel : Painted
+    {
         public readonly FileList Files = new FileList();
-        public readonly PillButton OpenButton = new PillButton("Open in File Explorer", PillKind.Secondary);
-        public readonly PillButton CopyButton = new PillButton("Copy path", PillKind.Secondary);
-        public Mood MascotMood = Mood.Happy;
-        public string PlaceholderTitle = "Pick a card to see what's inside.";
+        public readonly LinkWord OpenButton = new LinkWord("open in file explorer");
+        public readonly LinkWord CopyButton = new LinkWord("copy path") { Arrow = "→" };
+        public string PlaceholderTitle = "pick a row.";
 
         object current;
-        string title, path, info;
-        readonly List<Stat> stats = new List<Stat>();
-        string filesHeader;
-        bool hasFiles, showOpen, showCopy;
+        string title, path, info, filesHeader;
+        Color square = Color.Empty;
+        readonly List<KeyValuePair<string, Color>> tags = new List<KeyValuePair<string, Color>>();
+        readonly List<KeyValuePair<string, string>> spec = new List<KeyValuePair<string, string>>();
+        bool hasFiles, showOpen, showCopy, placeholder;
 
-        // layout
-        RectangleF card, titleRect, pathRect, statsRect, infoRect, filesHeaderRect;
-        RectangleF mascotArea;
+        RectangleF titleRect, pathRect, tagRect, specRect, infoRect, filesHeaderRect;
+        int specShown;
 
         public DetailPanel()
         {
             Controls.Add(Files);
             Controls.Add(OpenButton);
             Controls.Add(CopyButton);
-            OpenButton.BackColor = Theme.White;
-            CopyButton.BackColor = Theme.White;
             SetItem(null, null);
         }
 
         public object Current { get { return current; } }
 
-        float MascotSize { get { return Theme.S(84); } }
-
         public void SetItem(object tag, SystemArea areaOfCulprit)
         {
             current = tag;
-            stats.Clear();
             title = path = info = filesHeader = null;
-            List<ChangedFile> fileList = null;
+            tags.Clear();
+            spec.Clear();
+            square = Color.Empty;
             showOpen = showCopy = false;
+            placeholder = false;
+            List<ChangedFile> fileList = null;
 
             var c = tag as Culprit;
             var a = tag as SystemArea;
             if (c != null)
             {
                 var lines = new List<string>();
+                square = Theme.For(c);
+                tags.Add(T(Labeler.CategoryName(Labeler.CategoryOf(c)), Theme.Grey));
                 if (c.Kind == CulpritKind.Folder)
                 {
                     string p = c.Path.TrimEnd('\\');
                     int cut = p.LastIndexOf('\\');
-                    title = cut >= 0 && cut < p.Length - 1 ? p.Substring(cut + 1) : c.Path;
+                    title = (cut >= 0 && cut < p.Length - 1 ? p.Substring(cut + 1) : c.Path) + ".";
                     path = c.Path;
-                    lines.Add(c.Label + (string.IsNullOrEmpty(c.Contents) ? "." : " — " + c.Contents.Substring(0, 1).ToLowerInvariant() + c.Contents.Substring(1) + "."));
-                    OpenButton.Text = "Open in File Explorer";
+                    tags.Add(T(c.Label, Theme.Grey));
+                    if (c.IsNewFolder) tags.Add(T("new folder", Theme.Grey));
+                    if (c.HiddenReason != null) tags.Add(T("hidden spot", Theme.Red));
                     showOpen = showCopy = true;
+                    OpenButton.Text = "open in file explorer";
+                    if (c.HiddenReason != null) lines.Add(c.HiddenReason + " — easy to miss.");
                 }
                 else if (c.Kind == CulpritKind.SystemArea)
                 {
-                    title = c.Label;
+                    title = c.Label + ".";
                     path = c.Note;
+                    if (c.NewFiles > 0) tags.Add(T(c.NewFiles == 1 ? "new restore point" : c.NewFiles + " new restore points", Theme.Red));
                     if (areaOfCulprit != null && !string.IsNullOrEmpty(areaOfCulprit.Explanation)) lines.Add(areaOfCulprit.Explanation);
                     SetOpenText(c.OpenTarget);
                 }
                 else
                 {
-                    title = "Little bits, here and there";
+                    title = "little bits, here and there.";
                     path = c.Note;
-                    lines.Add("App updates, caches and logs each added a small amount. None of them is a big culprit on its own.");
+                    lines.Add("app updates, caches and logs each added a small amount. none of them is a big culprit on its own.");
                 }
 
-                if (!string.IsNullOrEmpty(c.Note) && c.Kind == CulpritKind.Folder) lines.Add(c.Note + ".");
-                if (c.HiddenReason != null && c.Kind == CulpritKind.Folder) lines.Add(c.HiddenReason + " — easy to miss.");
+                if (c.AddedBytes > 0) S("added", Format.Bytes(c.AddedBytes));
+                else if (c.EstimateBytes > 0) S("about (estimate)", "~" + Format.Bytes(c.EstimateBytes));
+                else if (c.PossibleBytes > 0) S("maybe", "up to " + Format.Bytes(c.PossibleBytes));
+                else S("added", c.Kind == CulpritKind.SystemArea ? "~0" : "—");
+                if (c.Kind == CulpritKind.SystemArea && areaOfCulprit != null) S("uses now", Format.Bytes(areaOfCulprit.CurrentBytes));
+                if (c.Kind != CulpritKind.SystemArea) S("new files", c.NewFiles.ToString("N0"));
+                if (c.GrewFiles > 0) S("existing files that grew", c.GrewFiles.ToString("N0"));
+                S("likelihood", Format.Percent(c.Likelihood) + " · " + c.Confidence.ToLowerInvariant() + " confidence");
+                if (c.Kind == CulpritKind.Folder && !string.IsNullOrEmpty(c.Contents)) S("contents", c.Contents);
+                if (c.Kind != CulpritKind.SystemArea)
+                {
+                    string a1 = Format.When(c.FirstUtc), b1 = Format.When(c.LastUtc);
+                    S("when", a1 == b1 ? b1 : a1 + " → " + b1);
+                }
+                if (c.Kind == CulpritKind.Folder && !string.IsNullOrEmpty(c.Note) && !c.IsNewFolder) lines.Add(c.Note + ".");
                 if (c.GrewFiles > 0 && c.PossibleBytes > 0)
-                    lines.Add(c.GrewFiles.ToString("N0") + " existing file" + (c.GrewFiles == 1 ? "" : "s") + " also grew (now " + Format.Bytes(c.PossibleBytes) +
-                              " in total). Their earlier size isn't known yet, so this part is a guess — your next scan can measure it exactly.");
+                    lines.Add("existing files also grew (now " + Format.Bytes(c.PossibleBytes) + " in total). their earlier size isn't known yet, so that part is a guess. your next scan measures it exactly.");
                 info = string.Join("\n", lines);
-
-                if (c.AddedBytes > 0)
-                    AddStat("ADDED", Format.Bytes(c.AddedBytes), Theme.Forest, Theme.Lime);
-                else if (c.EstimateBytes > 0)
-                    AddStat("ABOUT (ESTIMATE)", "~" + Format.Bytes(c.EstimateBytes), Theme.Forest, Theme.Lime);
-                else if (c.PossibleBytes > 0)
-                    AddStat("MAYBE", "up to " + Format.Bytes(c.PossibleBytes), Theme.Forest, Theme.Lime);
-                else
-                    AddStat("ADDED", c.Kind == CulpritKind.SystemArea ? "~0" : "\u2014", Theme.Forest, Theme.Lime);
-                if (c.Kind == CulpritKind.SystemArea && areaOfCulprit != null)
-                    AddStat("USES NOW", Format.Bytes(areaOfCulprit.CurrentBytes), Theme.Indigo, Color.White);
-                else
-                    AddStat(c.NewFiles > 0 || c.GrewFiles == 0 ? "NEW FILES" : "FILES THAT GREW",
-                            (c.NewFiles > 0 || c.GrewFiles == 0 ? c.NewFiles : c.GrewFiles).ToString("N0"), Theme.Indigo, Color.White);
-                AddStat("LIKELIHOOD", Format.Percent(c.Likelihood), Theme.Pink, Theme.Ink);
 
                 if (c.Files.Count > 0)
                 {
                     fileList = c.Files;
                     int total = c.NewFiles + c.GrewFiles;
                     filesHeader = total > c.Files.Count
-                        ? "Biggest " + c.Files.Count.ToString("N0") + " of " + total.ToString("N0") + " files"
-                        : (total == 1 ? "1 file" : total.ToString("N0") + " files");
+                        ? c.Files.Count.ToString("N0") + " biggest of " + total.ToString("N0")
+                        : total.ToString("00");
                 }
             }
             else if (a != null)
             {
-                title = a.Drive + "  " + a.Name;
-                path = "Uses " + Format.Bytes(a.CurrentBytes) + " right now";
-                AddStat("USES NOW", Format.Bytes(a.CurrentBytes), Theme.Indigo, Color.White);
-                AddStat("CHANGE", a.Delta.HasValue ? (a.Delta.Value == 0 ? "none" : Format.SignedBytes(a.Delta.Value)) : "first look", Theme.Forest, Theme.Lime);
-                AddStat("COMPARED WITH", a.PreviousUtc.HasValue ? Format.When(a.PreviousUtc.Value) : "next scan", Theme.Pink, Theme.Ink);
+                square = Theme.For(Category.System);
+                title = a.Drive + " " + a.Name + ".";
+                path = "uses " + Format.Bytes(a.CurrentBytes) + " right now";
+                tags.Add(T("system", Theme.Grey));
+                if (a.ActiveInWindow) tags.Add(T("busy in this window", Theme.Red));
+                S("uses now", Format.Bytes(a.CurrentBytes));
+                S("change", a.Delta.HasValue ? (a.Delta.Value == 0 ? "none" : Format.SignedBytes(a.Delta.Value)) : "first look");
+                S("compared with", a.PreviousUtc.HasValue ? Format.When(a.PreviousUtc.Value) : "next scan");
                 var lines = new List<string>();
                 if (!string.IsNullOrEmpty(a.Activity)) lines.Add(a.Activity + ".");
                 if (!string.IsNullOrEmpty(a.Explanation)) lines.Add(a.Explanation);
-                if (!a.Delta.HasValue) lines.Add("This is the first time it's been measured — next scan will show how much it changed.");
+                if (!a.Delta.HasValue) lines.Add("first time this was measured. the next scan shows how much it changed.");
                 info = string.Join("\n", lines);
                 SetOpenText(a.OpenTarget);
             }
             else
             {
+                placeholder = true;
                 title = PlaceholderTitle;
-                path = "Here's what the colors mean:";
+                path = "the files inside each place show up here. the colored square says what kind of place it is:";
+                foreach (Category cat in Enum.GetValues(typeof(Category)))
+                    spec.Add(new KeyValuePair<string, string>("■ " + Labeler.CategoryName(cat), ""));
             }
 
             Files.SetFiles(fileList);
@@ -145,172 +186,138 @@ namespace SpaceSleuth.UI
             Invalidate();
         }
 
+        static KeyValuePair<string, Color> T(string s, Color c) { return new KeyValuePair<string, Color>(Theme.Lc(s), c); }
+        void S(string k, string v) { spec.Add(new KeyValuePair<string, string>(k, v)); }
+
         void SetOpenText(string target)
         {
             if (string.IsNullOrEmpty(target)) return;
-            OpenButton.Text = target.IndexOf("RecycleBin", StringComparison.OrdinalIgnoreCase) >= 0 ? "Open Recycle Bin"
-                            : target.StartsWith("cleanmgr", StringComparison.OrdinalIgnoreCase) ? "Open Disk Cleanup"
-                            : "Open settings";
+            OpenButton.Text = target.IndexOf("RecycleBin", StringComparison.OrdinalIgnoreCase) >= 0 ? "open recycle bin"
+                            : target.StartsWith("cleanmgr", StringComparison.OrdinalIgnoreCase) ? "open disk cleanup"
+                            : "open settings";
             showOpen = true;
         }
 
-        void AddStat(string label, string value, Color back, Color fore)
-        {
-            stats.Add(new Stat { Label = label, Value = value, Back = back, Fore = fore });
-        }
-
-        public void Tick(float now)
-        {
-            if (!Theme.ReducedMotion && mascotArea.Width > 0)
-                Invalidate(Rectangle.Ceiling(mascotArea));
-        }
-
-        protected override void OnLayout(System.Windows.Forms.LayoutEventArgs e)
+        protected override void OnLayout(LayoutEventArgs e)
         {
             base.OnLayout(e);
             if (Width <= 0 || Height <= 0) return;
             using (var g = CreateGraphics())
             {
-                float top = Theme.S(76);
-                card = new RectangleF(Theme.S(4), top, Width - Theme.S(36), Height - top - Theme.S(14));
-                float x = card.X + Theme.S(24), w = card.Width - Theme.S(48);
-                float y = card.Y + Theme.S(22);
-                float bottom = card.Bottom - Theme.S(12);
+                float x = Theme.S(22), w = Width - x - Theme.S(8);
+                float y = Theme.S(30);
+                titleRect = new RectangleF(x, y, w, Theme.S(34));
+                y += Theme.S(36);
+                pathRect = new RectangleF(x, y, w, Theme.S(placeholder ? 34 : 16));
+                y += Theme.S(placeholder ? 40 : 20);
+                tagRect = new RectangleF(x, y, w, Theme.S(16));
+                y += Theme.S(28);
 
-                titleRect = new RectangleF(x, y, w, Theme.S(30));
-                y += Theme.S(30);
-                pathRect = new RectangleF(x, y, w, Theme.S(20));
-                y += Theme.S(20) + Theme.S(14);
+                float rowH = Theme.S(22);
+                int bh = Theme.Si(30);
+                float actions = showOpen || showCopy ? bh + Theme.S(14) : 0;
+                float filesMin = hasFiles ? Theme.S(36 + 150) : 0;
+                var infoFont = Theme.G(13, 500);
+                float lineH = infoFont.GetHeight(g) + Theme.S(2);
+                float infoFull = string.IsNullOrEmpty(info) ? 0 : Theme.WrappedHeight(g, Theme.Lc(info), infoFont, w);
 
-                int bh = Theme.Si(36);
-                float buttonsW = (showOpen ? OpenButton.PreferredWidth() : 0) + (showCopy ? CopyButton.PreferredWidth() + Theme.S(8) : 0);
-                float filesMin = hasFiles ? Theme.S(38 + 130) : 0;
-                float buttonsRow = !hasFiles && (showOpen || showCopy) ? bh + Theme.S(14) : 0;
-                float statsH = Theme.S(74);
-                var infoFont = Theme.Ui(13.5f, Weight.Regular);
-                float lineH = infoFont.GetHeight(g);
-                float infoFull = string.IsNullOrEmpty(info) ? 0 : Theme.WrappedHeight(g, info, infoFont, w);
-
-                // When space is tight: files and buttons win, then the stat tiles, then the explanation.
-                float room = bottom - y - filesMin - buttonsRow;
-                if (stats.Count > 0 && room >= statsH + Theme.S(12))
-                {
-                    statsRect = new RectangleF(x, y, w, statsH);
-                    y += statsH + Theme.S(12);
-                    room -= statsH + Theme.S(12);
-                }
-                else statsRect = RectangleF.Empty;
+                // files and actions win; then the spec rows; then the explanation
+                float room = Height - Theme.S(10) - y - actions - filesMin;
+                specShown = Math.Max(0, Math.Min(spec.Count, (int)((room - (infoFull > 0 ? lineH * 2 : 0)) / rowH)));
+                if (placeholder) specShown = spec.Count;
+                specRect = new RectangleF(x, y, w, specShown * rowH);
+                y += specShown * rowH + (specShown > 0 ? Theme.S(12) : 0);
+                room -= specShown * rowH;
 
                 if (infoFull > 0 && room >= lineH)
                 {
-                    float maxInfo = hasFiles ? Math.Min(room - Theme.S(10), lineH * 3) : room - Theme.S(10);
+                    float maxInfo = hasFiles ? Math.Min(room - Theme.S(6), lineH * 4) : room - Theme.S(6);
                     float ih = Math.Min(infoFull, Math.Max(lineH, maxInfo));
                     ih = Math.Max(lineH, (float)Math.Floor(ih / lineH + 0.05f) * lineH);
-                    infoRect = new RectangleF(x, y, w, ih + Theme.S(2));
+                    infoRect = new RectangleF(x, y, w, ih);
                     y += ih + Theme.S(12);
                 }
                 else infoRect = RectangleF.Empty;
 
+                float bx = x;
+                if (showOpen) { OpenButton.SetBounds((int)bx, (int)y, OpenButton.PreferredWidth(), bh); bx += OpenButton.Width + Theme.S(26); }
+                if (showCopy) CopyButton.SetBounds((int)bx, (int)y, CopyButton.PreferredWidth(), bh);
+                if (showOpen || showCopy) y += bh + Theme.S(14);
+
                 filesHeaderRect = RectangleF.Empty;
-                bool filesFit = false;
+                bool fit = false;
                 if (hasFiles)
                 {
-                    // "Files here" on the left, the buttons on the right of the same row
-                    float bx = x + w - buttonsW;
-                    if (showOpen)
+                    filesHeaderRect = new RectangleF(x, y, w, Theme.S(26));
+                    y += Theme.S(34);
+                    float fh = Height - Theme.S(8) - y;
+                    if (fh >= Theme.S(48))
                     {
-                        OpenButton.SetBounds((int)bx, (int)(y - Theme.S(4)), OpenButton.PreferredWidth(), bh);
-                        bx += OpenButton.Width + Theme.S(8);
+                        fit = true;
+                        Files.SetBounds((int)x, (int)y, (int)(Width - x), (int)fh);
                     }
-                    if (showCopy) CopyButton.SetBounds((int)bx, (int)(y - Theme.S(4)), CopyButton.PreferredWidth(), bh);
-                    filesHeaderRect = new RectangleF(x, y - Theme.S(4), Math.Max(0, w - buttonsW - Theme.S(12)), bh);
-                    y += Theme.S(38);
-                    float fh = bottom - y;
-                    if (fh >= Theme.S(50))
-                    {
-                        filesFit = true;
-                        Files.SetBounds((int)(card.X + Theme.S(12)), (int)y, (int)(card.Width - Theme.S(18)), (int)fh);
-                    }
+                    else filesHeaderRect = RectangleF.Empty;
                 }
-                else
-                {
-                    float bx = x;
-                    if (showOpen)
-                    {
-                        OpenButton.SetBounds((int)bx, (int)y, OpenButton.PreferredWidth(), bh);
-                        bx += OpenButton.Width + Theme.S(8);
-                    }
-                    if (showCopy) CopyButton.SetBounds((int)bx, (int)y, CopyButton.PreferredWidth(), bh);
-                }
-                Files.Visible = filesFit;
-
-                float size = MascotSize;
-                mascotArea = new RectangleF(card.Right - Theme.S(110) - size * 1.0f, 0, size * 2.0f, top + size * 0.2f);
+                Files.Visible = fit;
             }
         }
 
         protected override void Draw(Graphics g)
         {
-            if (card.Width <= 0) return;
-            float size = MascotSize, mcx = card.Right - Theme.S(150);
-            float t = Theme.Now;
-            bool anim = !Theme.ReducedMotion;
+            Theme.Line(g, Theme.Hair, Theme.S(1), 0.5f, 0, 0.5f, Height);
+            Theme.Label(g, "fig. 03 / inside", Theme.M(9.5f), Theme.Ink2, Theme.S(22), Theme.S(12));
+            Theme.LabelRight(g, Theme.Coord(Left, Top), Theme.M(8), Theme.Ink, Width - Theme.S(10), Theme.S(12));
 
-            // Confetti near the corner, then Pebble peeking over the card
-            Theme.Sparkle(g, card.Right - Theme.S(40), card.Y - Theme.S(48), Theme.S(10), Theme.Purple);
-            Theme.Flower(g, card.Right - Theme.S(18), card.Y - Theme.S(18), Theme.S(10), Theme.Sun, Theme.Orange, 6);
-            Theme.Clover(g, card.X + Theme.S(40), card.Y - Theme.S(16), Theme.S(12), Theme.Mint);
-            Mascot.DrawBody(g, mcx, card.Y - size * 0.16f, size, MascotMood, t, true, anim);
+            Theme.Text(g, Theme.Lc(title), Theme.G(24, 550), Theme.Ink, titleRect);
+            Theme.Text(g, Theme.Lc(path), Theme.M(10), Theme.Ink2, pathRect, StringAlignment.Near, StringAlignment.Center,
+                current is Culprit && ((Culprit)current).Kind == CulpritKind.Folder, placeholder);
 
-            Theme.Card(g, Theme.White, card, Theme.S(30));
-            Mascot.DrawHands(g, mcx, card.Y, size, t, anim);
-
-            Theme.Text(g, title, Theme.Ui(22, Weight.Bold), Theme.Ink, titleRect);
-            Theme.Text(g, path, Theme.Ui(13, Weight.Regular), Theme.InkA(150), pathRect, System.Drawing.StringAlignment.Near, System.Drawing.StringAlignment.Center, current is Culprit && ((Culprit)current).Kind == CulpritKind.Folder);
-
-            if (!statsRect.IsEmpty)
+            if (!placeholder)
             {
-                float gap = Theme.S(10);
-                float tw = (statsRect.Width - gap * (stats.Count - 1)) / stats.Count;
-                for (int i = 0; i < stats.Count; i++)
+                float tx = tagRect.X, cy = tagRect.Y + tagRect.Height / 2;
+                if (square != Color.Empty)
                 {
-                    var s = stats[i];
-                    var r = new RectangleF(statsRect.X + i * (tw + gap), statsRect.Y, tw, statsRect.Height);
-                    Theme.Fill(g, s.Back, r, Theme.S(22));
-                    Theme.Text(g, s.Label, Theme.Ui(11.5f, Weight.Semibold), Color.FromArgb(215, s.Fore),
-                        new RectangleF(r.X + Theme.S(14), r.Y + Theme.S(10), r.Width - Theme.S(24), Theme.S(18)));
-                    var vf = Theme.Ui(s.Value.Length > 9 ? 19 : 26, Weight.Light);
-                    Theme.Text(g, s.Value, vf, s.Fore, new RectangleF(r.X + Theme.S(8), r.Bottom - Theme.S(42), r.Width - Theme.S(20), Theme.S(36)),
-                        System.Drawing.StringAlignment.Far, System.Drawing.StringAlignment.Center);
+                    Theme.Toner(g, square, new RectangleF(tx, cy - Theme.S(4.5f), Theme.S(9), Theme.S(9)), 4);
+                    tx += Theme.S(16);
                 }
+                var tf = Theme.M(9.5f);
+                for (int i = 0; i < tags.Count && tx < tagRect.Right - Theme.S(20); i++)
+                {
+                    if (i > 0) tx += Theme.Label(g, " · ", tf, Theme.Grey, tx, cy);
+                    tx += Theme.Label(g, tags[i].Key, tf, tags[i].Value, tx, cy, tagRect.Right - tx);
+                }
+            }
+
+            float rowH = Theme.S(22);
+            for (int i = 0; i < specShown && i < spec.Count; i++)
+            {
+                float cy = specRect.Y + i * rowH + rowH / 2;
+                var kv = spec[i];
+                if (placeholder)
+                {
+                    var cat = (Category)i;
+                    Theme.Toner(g, Theme.For(cat), new RectangleF(specRect.X, cy - Theme.S(4), Theme.S(8), Theme.S(8)), i + 2);
+                    Theme.Label(g, Labeler.CategoryName(cat).ToLowerInvariant(), Theme.G(14, 500), Theme.Ink, specRect.X + Theme.S(18), cy);
+                }
+                else
+                {
+                    float kw = Theme.Label(g, kv.Key, Theme.M(10), Theme.Ink, specRect.X, cy);
+                    float vx = specRect.X + kw + Theme.S(14);
+                    Theme.TextRightFit(g, Theme.Lc(kv.Value), Theme.M(10), Theme.Ink2, new RectangleF(vx, cy - Theme.S(9), specRect.Right - vx, Theme.S(18)));
+                }
+                Theme.Line(g, Theme.Hair2, Theme.S(1), specRect.X, cy + rowH / 2 - 0.5f, specRect.Right, cy + rowH / 2 - 0.5f);
             }
 
             if (!infoRect.IsEmpty)
-                Theme.Text(g, info, Theme.Ui(13.5f, Weight.Regular), Theme.InkA(200), infoRect,
-                    System.Drawing.StringAlignment.Near, System.Drawing.StringAlignment.Near, false, true);
-
-            if (current == null)
-            {
-                // Color legend: one color per kind of place, used everywhere in the app.
-                float lx = pathRect.X, ly = pathRect.Bottom + Theme.S(12), maxX = card.Right - Theme.S(24);
-                foreach (Category cat in Enum.GetValues(typeof(Category)))
-                {
-                    string name = Labeler.CategoryName(cat);
-                    float cw = Theme.Width(g, name, Theme.Ui(12, Weight.Medium)) + Theme.S(34);
-                    if (lx + cw > maxX) { lx = pathRect.X; ly += Theme.S(32); }
-                    lx += Theme.Chip(g, lx, ly, name, Theme.For(cat), cw, 26) + Theme.S(8);
-                }
-                if (card.Height > Theme.S(300))
-                {
-                    Theme.Sticker(g, new PointF(card.Right - Theme.S(150), card.Bottom - Theme.S(70)), "calm", -14, Theme.Forest, Theme.Lime, false, 18);
-                    Theme.Sticker(g, new PointF(card.Right - Theme.S(80), card.Bottom - Theme.S(110)), "steady", 16, Theme.Orange, Theme.Butter, true, 18);
-                    Theme.Sparkle(g, card.Right - Theme.S(215), card.Bottom - Theme.S(120), Theme.S(12), Theme.Purple);
-                    Theme.Flower(g, card.Right - Theme.S(40), card.Bottom - Theme.S(40), Theme.S(13), Theme.Pink, Theme.Sun);
-                }
-            }
+                Theme.Text(g, Theme.Lc(info), Theme.G(13, 500), Theme.Ink2, infoRect, StringAlignment.Near, StringAlignment.Near, false, true);
 
             if (!filesHeaderRect.IsEmpty)
-                Theme.Text(g, filesHeader, Theme.Ui(14, Weight.Bold), Theme.Ink, filesHeaderRect);
+            {
+                float cy = filesHeaderRect.Y + filesHeaderRect.Height / 2;
+                float w = Theme.Label(g, "files.", Theme.G(16, 600), Theme.Ink, filesHeaderRect.X, cy);
+                Theme.Label(g, Theme.Lc(filesHeader), Theme.M(9.5f), Theme.Grey, filesHeaderRect.X + w + Theme.S(10), cy);
+                Theme.Line(g, Theme.Hair, Theme.S(1), filesHeaderRect.X, filesHeaderRect.Bottom + Theme.S(4), filesHeaderRect.Right, filesHeaderRect.Bottom + Theme.S(4));
+            }
         }
     }
 }

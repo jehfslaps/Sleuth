@@ -1,4 +1,4 @@
-name: Build Space Sleuth
+name: Build Sleuth
 
 on:
   push:
@@ -29,23 +29,23 @@ jobs:
         shell: pwsh
         run: dotnet build src/SpaceSleuth/SpaceSleuth.csproj -c Release -o out -p:Version=1.0.${{ github.run_number }} -p:InformationalVersion=1.0.${{ github.run_number }}
 
-      - name: Build installer (SpaceSleuth-Setup.exe)
+      - name: Build installer (Sleuth-Setup.exe)
         shell: pwsh
         run: |
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) {
             choco install innosetup -y --no-progress
           }
-          & $iscc "/DAppVersion=1.0.${{ github.run_number }}" installer\SpaceSleuth.iss
+          & $iscc "/DAppVersion=1.0.${{ github.run_number }}" installer\Sleuth.iss
           if ($LASTEXITCODE -ne 0) { throw "Installer build failed" }
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: SpaceSleuth
+          name: Sleuth
           path: |
-            out/SpaceSleuth-Setup.exe
-            out/SpaceSleuth.exe
+            out/Sleuth-Setup.exe
+            out/Sleuth.exe
 
       - name: Publish as the "latest" release (direct .exe download link)
         if: github.ref == 'refs/heads/main'
@@ -54,8 +54,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest --yes --cleanup-tag || true
-          gh release create latest out/SpaceSleuth-Setup.exe out/SpaceSleuth.exe \
+          gh release create latest out/Sleuth-Setup.exe out/Sleuth.exe \
             --target "$GITHUB_SHA" \
-            --title "Space Sleuth v1.0.${{ github.run_number }}" \
-            --notes "Built automatically from commit ${GITHUB_SHA::7}. Download **SpaceSleuth-Setup.exe** to install it like any other program (Start menu shortcut, uninstall from Settings > Apps). **SpaceSleuth.exe** is the same app with no install, if you'd rather just run it." \
+            --title "Sleuth v1.0.${{ github.run_number }}" \
+            --notes "Built automatically from commit ${GITHUB_SHA::7}. Download **Sleuth-Setup.exe** to install it like any other program (Start menu shortcut, uninstall from Settings > Apps). **Sleuth.exe** is the same app with no install, if you'd rather just run it." \
             --latest

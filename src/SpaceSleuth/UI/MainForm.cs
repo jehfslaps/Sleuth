@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -18,7 +19,7 @@ namespace SpaceSleuth.UI
         static readonly KeyValuePair<string, TimeSpan>[] TimeWindows =
         {
             // Zero = "since your last scan", worked out from the saved history when you press the button.
-            new KeyValuePair<string, TimeSpan>("Since last scan", TimeSpan.Zero),
+            new KeyValuePair<string, TimeSpan>("since last scan", TimeSpan.Zero),
             new KeyValuePair<string, TimeSpan>("6h", TimeSpan.FromHours(6)),
             new KeyValuePair<string, TimeSpan>("12h", TimeSpan.FromHours(12)),
             new KeyValuePair<string, TimeSpan>("24h", TimeSpan.FromHours(24)),
@@ -30,22 +31,23 @@ namespace SpaceSleuth.UI
         };
 
         const int Default48h = 4;
-        const string FindText = "Find my space";
-        const string StopText = "Stop looking";
+        const string FindText = "find my space";
+        const string StopText = "stop looking";
+        const string MainDrive = "C:";
 
-        readonly HeroPanel hero = new HeroPanel();
-        readonly Toolbar toolbar;
-        readonly Segmented windowPicker;
-        readonly PillButton drivePicker = new PillButton("All drives", PillKind.Secondary) { ShowCaret = true };
-        readonly ToggleChip thorough = new ToggleChip("Thorough check");
-        readonly PillButton findButton = new PillButton(FindText, PillKind.Primary);
-        readonly SearchBox filter = new SearchBox("Filter results…");
-        readonly HeadlinePanel headline = new HeadlinePanel();
-        readonly DriveBanner banner = new DriveBanner();
+        readonly SideBar side = new SideBar();
+        readonly HeaderBar header = new HeaderBar();
+        readonly DriveTabs tabs = new DriveTabs();
+        readonly ActionBlock findButton = new ActionBlock(FindText);
+        readonly Headline headline = new Headline();
         readonly ResultList results = new ResultList();
         readonly DetailPanel detail = new DetailPanel();
-        readonly StatusBar status = new StatusBar();
-        readonly ContextMenuStrip driveMenu = Theme.Menu();
+        readonly DataColumn data = new DataColumn();
+        readonly StatusLine status = new StatusLine();
+        readonly BottomBar bottom;
+        readonly OptionWords windowPicker;
+        readonly ToggleBox thorough = new ToggleBox("thorough");
+        readonly FilterField filter = new FilterField();
         readonly ContextMenuStrip itemMenu = Theme.Menu();
         readonly ToolTip tips = new ToolTip();
         readonly System.Windows.Forms.Timer frame = new System.Windows.Forms.Timer { Interval = 33 };
@@ -57,53 +59,64 @@ namespace SpaceSleuth.UI
         string windowPhrase = "in the last 48 hours";
         CancellationTokenSource cts;
         DateTime lastStatus = DateTime.MinValue;
+        Point lastMouse;
+
+        /// <summary>The bottom bar: hairline on top, the time window words, the thorough toggle and the filter.</summary>
+        sealed class BottomBar : Painted
+        {
+            public readonly List<int> Separators = new List<int>();
+
+            protected override void Draw(Graphics g)
+            {
+                Theme.Line(g, Theme.Hair, Theme.S(1), 0, 0.5f, Width, 0.5f);
+                foreach (var x in Separators)
+                    Theme.Line(g, Theme.Hair, Theme.S(1), x, Theme.S(18), x, Theme.S(38));
+            }
+        }
 
         public MainForm()
         {
             using (var g = CreateGraphics()) Theme.Scale = g.DpiX / 96f;
+            Theme.Dark = LoadThemeSetting();
 
             SuspendLayout();
             AutoScaleMode = AutoScaleMode.None;
-            Font = Theme.Ui(14, Weight.Regular);
-            Text = "Space Sleuth";
-            BackColor = Theme.Cream;
+            Font = Theme.G(14, 500);
+            Text = "Sleuth";
+            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
+            BackColor = Theme.Paper;
             ForeColor = Theme.Ink;
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
             StartPosition = FormStartPosition.CenterScreen;
             var work = Screen.PrimaryScreen.WorkingArea;
-            Size = new Size(Math.Min(Theme.Si(1340), work.Width - 40), Math.Min(Theme.Si(940), work.Height - 40));
-            MinimumSize = new Size(Theme.Si(1000), Theme.Si(640));
+            Size = new Size(Math.Min(Theme.Si(1380), work.Width - 40), Math.Min(Theme.Si(900), work.Height - 40));
+            MinimumSize = new Size(Theme.Si(1060), Theme.Si(660));
 
             // If you've scanned before, pick up exactly where you left off.
             DateTime? previous = null;
             try { previous = ScanEngine.LastScanUtc(null); } catch { }
-            windowPicker = new Segmented(TimeWindows.Select(w => w.Key).ToArray(), previous.HasValue ? 0 : Default48h);
-            toolbar = new Toolbar();
-            toolbar.Controls.AddRange(new Control[] { windowPicker, drivePicker, thorough, findButton, filter });
-            tips.SetToolTip(windowPicker, "How far back to look. \u201cSince last scan\u201d covers everything since you last ran Space Sleuth.");
+            windowPicker = new OptionWords("look back", TimeWindows.Select(w => w.Key).ToArray(), previous.HasValue ? 0 : Default48h);
+            bottom = new BottomBar();
+            bottom.Controls.AddRange(new Control[] { windowPicker, thorough, filter });
+
+            tips.SetToolTip(windowPicker, "How far back to look. “since last scan” covers everything since you last ran Sleuth.");
             tips.SetToolTip(thorough, "Also checks the dates on every file, not just Windows' change log.\nSlower, but catches anything the change log has already forgotten.");
-            tips.SetToolTip(drivePicker, "Which drive to look at");
+            tips.SetToolTip(tabs, "Which drive to look at");
 
-            Controls.AddRange(new Control[] { hero, toolbar, banner, headline, results, detail, status });
+            Controls.AddRange(new Control[] { side, header, tabs, findButton, headline, results, detail, data, status, bottom });
 
-            BuildDriveMenu();
+            BuildDrives();
             BuildItemMenu();
             Wire();
 
             var version = Assembly.GetExecutingAssembly().GetCustomAttribute<AssemblyInformationalVersionAttribute>();
-            status.Version = "v" + (version != null ? version.InformationalVersion : "1.0");
-            status.Status = Native.IsElevated() ? "Ready when you are." : "Not running as administrator — you'll only see part of the picture.";
-            headline.Plain = "Where did your space go?";
+            header.Breadcrumb = "sleuth / disk space finder / v" + (version != null ? version.InformationalVersion : "1.0");
+            status.Status = Native.IsElevated() ? "ready." : "not running as administrator — partial results only.";
+            headline.Plain = "where did your space go?";
 
-            animated.AddRange(new IAnimated[] { windowPicker, status, banner, results, detail, detail.Files });
-            frame.Tick += (s, e) =>
-            {
-                if (WindowState == FormWindowState.Minimized) return;
-                // Stay light: idle animations (Pebble bobbing) only run while the window is in front or a scan is going.
-                if (Form.ActiveForm != this && cts == null) return;
-                float now = Theme.Now;
-                foreach (var a in animated) a.Tick(now);
-            };
+            animated.AddRange(new IAnimated[] { status, results, detail.Files, data });
+            frame.Tick += (s, e) => OnFrame();
+            Theme.Changed += (s, e) => { BackColor = Theme.Paper; ApplyWindowColors(); Invalidate(true); };
 
             ResumeLayout(false);
 
@@ -111,25 +124,27 @@ namespace SpaceSleuth.UI
             {
                 frame.Start();
 #if PREVIEW
+                if (Environment.GetEnvironmentVariable("PREVIEW_DARK") == "1") Theme.SetDark(true);
                 if (Environment.GetEnvironmentVariable("PREVIEW_STATE") == "scan")
                 {
                     status.Busy = true;
-                    SetHeadline("Looking around your drives\u2026", null, null);
-                    banner.WasFree = 245L << 30; banner.WasUtc = DateTime.UtcNow.AddDays(-3); banner.NowFree = 237L << 30;
-                    banner.State = DriveBanner.Mode.Scanning; headline.HideLine = true;
+                    SetHeadline("looking around your drives…", null, null);
+                    headline.Caption = "fig. 02 / scanning — since your last scan (mon 10:15 am)";
+                    data.WasFree = 245L << 30; data.WasUtc = DateTime.UtcNow.AddDays(-3); data.NowFree = 237L << 30; data.TotalBytes = 953L << 30;
+                    data.State = DataColumn.Mode.Scanning;
                     results.State = ListMood.Scanning;
-                    results.MoodTitle = "Looking around\u2026";
-                    results.MoodText = "C: reading change journal... 412,300 records";
-                    detail.MascotMood = Mood.Searching;
-                    detail.PlaceholderTitle = "Hang tight \u2014 cards show up in a moment.";
+                    results.MoodTitle = "looking.";
+                    results.MoodText = "c: reading change journal... 412,300 records";
+                    detail.PlaceholderTitle = "hang on.";
                     detail.SetItem(null, null);
-                    status.Status = "C: reading change journal... 412,300 records";
+                    status.Status = "c: reading change journal... 412,300 records";
                     findButton.Text = StopText;
                     PerformLayout();
                 }
                 else
                 {
                     result = PreviewData.Build();
+                    windowPhrase = "since your last scan (mon 10:15 am)";
                     ShowResult();
                 }
 #else
@@ -143,98 +158,148 @@ namespace SpaceSleuth.UI
             };
         }
 
-        // ---------------- Layout ----------------
+        // ---------------- Theme & window chrome ----------------
 
-        /// <summary>The row of controls under the hero, with a little "Look back" caption.</summary>
-        sealed class Toolbar : Painted
+        static string SettingsPath
         {
-            public float CaptionWidth;
-
-            protected override void Draw(Graphics g)
-            {
-                var f = Theme.Ui(13.5f, Weight.Medium);
-                CaptionWidth = Theme.Width(g, "Look back", f);
-                Theme.Text(g, "Look back", f, Theme.InkA(150), new RectangleF(Theme.S(32), 0, CaptionWidth + Theme.S(4), Theme.S(42)));
-            }
+            get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SpaceSleuth", "settings.txt"); }
         }
 
-        protected override void OnLayout(LayoutEventArgs e)
+        static bool LoadThemeSetting()
         {
-            base.OnLayout(e);
-            if (toolbar == null) return;
-            int W = ClientSize.Width, H = ClientSize.Height;
-            int y = 0;
-            bool bigBanner = banner.State == DriveBanner.Mode.Result || banner.State == DriveBanner.Mode.Scanning;
-            hero.SetBounds(0, y, W, Theme.Si(bigBanner ? 92 : 128));
-            y = hero.Bottom + Theme.Si(14);
-
-            // Toolbar: wraps onto a second row if the window is narrow
-            int x = Theme.Si(32) + Theme.Si(84), rowH = Theme.Si(44), gap = Theme.Si(10);
-            int ty = 0, maxX = W - Theme.Si(32);
-            Action<Control, int> place = (c, w) =>
+            try
             {
-                if (x + w > maxX && x > Theme.Si(120)) { x = Theme.Si(32); ty += rowH + Theme.Si(8); }
-                c.SetBounds(x, ty, w, rowH);
-                x += w + gap;
-            };
-            place(windowPicker, windowPicker.PreferredWidth());
-            place(drivePicker, Math.Max(drivePicker.PreferredWidth(), Theme.Si(130)));
-            place(thorough, thorough.PreferredWidth());
-            place(findButton, findButton.PreferredWidth());
-            // Filter box: right-aligned on the same row if there's room for at least a small one, otherwise on its own row.
-            int room = maxX - x;
-            if (room >= Theme.Si(120))
-            {
-                int fw = Math.Min(room, Theme.Si(300));
-                filter.SetBounds(maxX - fw, ty, fw, rowH);
+                if (File.Exists(SettingsPath))
+                    foreach (var line in File.ReadAllLines(SettingsPath))
+                        if (line.StartsWith("theme=")) return line.Substring(6).Trim() == "dark";
             }
-            else place(filter, Theme.Si(240));
-            toolbar.SetBounds(0, y, W, ty + rowH + Theme.Si(2));
-            y = toolbar.Bottom + Theme.Si(10);
+            catch { }
+            return Theme.WindowsPrefersDark();
+        }
 
-            int bh = banner.Measure(W);
-            banner.SetBounds(0, y, W, bh);
-            banner.Visible = bh > 0;
-            if (bh > 0) y = banner.Bottom + Theme.Si(4);
+        static void SaveThemeSetting()
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(SettingsPath));
+                File.WriteAllText(SettingsPath, "theme=" + (Theme.Dark ? "dark" : "light") + Environment.NewLine);
+            }
+            catch { }
+        }
 
-            int hh = headline.Measure(W);
-            headline.SetBounds(0, y, W, hh);
-            y = headline.Bottom + Theme.Si(4);
+        static int ColorRef(Color c) { return c.R | (c.G << 8) | (c.B << 16); }
 
-            int statusH = Theme.Si(34);
-            status.SetBounds(0, H - statusH, W, statusH);
+        void ApplyWindowColors()
+        {
+            if (!IsHandleCreated) return;
+            try
+            {
+                int dark = Theme.Dark ? 1 : 0;
+                DwmSetWindowAttribute(Handle, 20, ref dark, 4);               // dark title bar buttons
+                int caption = ColorRef(Theme.Side), text = ColorRef(Theme.Ink), border = ColorRef(Theme.Dark ? Theme.Hex("#2C2830") : Theme.Hex("#CFCBD0"));
+                DwmSetWindowAttribute(Handle, 35, ref caption, 4);
+                DwmSetWindowAttribute(Handle, 36, ref text, 4);
+                DwmSetWindowAttribute(Handle, 34, ref border, 4);
+                int squareCorners = 1;                                        // DWMWCP_DONOTROUND: no rounded corners
+                DwmSetWindowAttribute(Handle, 33, ref squareCorners, 4);
+            }
+            catch { }
+        }
 
-            int mainH = Math.Max(Theme.Si(200), status.Top - y);
-            int leftW = (int)(W * 0.57);
-            int off = Theme.Si(6);
-            results.SetBounds(0, y + off, leftW, mainH - off);
-            detail.SetBounds(leftW, y, W - leftW, mainH);
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            // the gaps between panels get the same paper and grain, so nothing looks like a box
+            e.Graphics.Clear(Theme.Paper);
+            Theme.Grain(e.Graphics, this, ClientRectangle);
         }
 
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
-            // Windows 11: cream title bar with oxblood text so the window feels like one piece of paper.
-            try
-            {
-                int caption = 0x00F2FCFF, text = 0x00120E4A, border = 0x00DAEBF3;
-                DwmSetWindowAttribute(Handle, 35, ref caption, 4);
-                DwmSetWindowAttribute(Handle, 36, ref text, 4);
-                DwmSetWindowAttribute(Handle, 34, ref border, 4);
-            }
-            catch { }
+            ApplyWindowColors();
         }
 
         [DllImport("dwmapi.dll")]
         static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
+        void OnFrame()
+        {
+            if (WindowState == FormWindowState.Minimized) return;
+            if (Form.ActiveForm != this && cts == null) return;
+            float now = Theme.Now;
+            foreach (var a in animated) a.Tick(now);
+
+            // live coordinates, like a lab sheet
+            var p = PointToClient(Cursor.Position);
+            if (p != lastMouse && ClientRectangle.Contains(p))
+            {
+                lastMouse = p;
+                header.Coords = Theme.Coord(p.X, p.Y);
+                header.Invalidate();
+            }
+        }
+
+        // ---------------- Layout ----------------
+
+        protected override void OnLayout(LayoutEventArgs e)
+        {
+            base.OnLayout(e);
+            if (bottom == null) return;
+            int W = ClientSize.Width, H = ClientSize.Height;
+            int sideW = Theme.Si(92), headerH = Theme.Si(36);
+            int dataW = Math.Max(Theme.Si(330), Math.Min(Theme.Si(400), (int)(W * 0.27)));
+            int x0 = sideW + Theme.Si(22), xr = W - dataW - Theme.Si(22);
+
+            side.SetBounds(0, 0, sideW, H);
+            header.SetBounds(sideW, 0, W - sideW, headerH);
+            data.SetBounds(W - dataW, headerH, dataW, H - headerH);
+
+            int aw = findButton.PreferredWidth();
+            findButton.SetBounds(xr - aw, headerH + Theme.Si(20), aw, Theme.Si(52));
+            tabs.SetBounds(x0, headerH + Theme.Si(6), Math.Max(Theme.Si(100), xr - aw - Theme.Si(20) - x0), Theme.Si(76));
+
+            // bottom bar (wraps to a second row when narrow)
+            int bx = Theme.Si(20), row = 0, rowH = Theme.Si(52);
+            int barW = xr - sideW + Theme.Si(22) - Theme.Si(1);
+            bottom.Separators.Clear();
+            Action<Control, int> place = (c, w) =>
+            {
+                if (bx + w > barW - Theme.Si(10) && bx > Theme.Si(30)) { bx = Theme.Si(20); row++; }
+                c.SetBounds(bx, Theme.Si(4) + row * rowH, w, rowH);
+                bx += w + Theme.Si(18);
+                bottom.Separators.Add(bx - Theme.Si(9));
+            };
+            place(windowPicker, windowPicker.PreferredWidth());
+            place(thorough, thorough.PreferredWidth());
+            int fw = Math.Min(Theme.Si(260), Math.Max(Theme.Si(180), barW - bx - Theme.Si(10)));
+            place(filter, fw);
+            bottom.Separators.RemoveAt(bottom.Separators.Count - 1);
+            int barH = (row + 1) * rowH + Theme.Si(10);
+            bottom.SetBounds(sideW + 1, H - barH, barW, barH);
+
+            int statusH = Theme.Si(24);
+            status.SetBounds(x0, bottom.Top - statusH - Theme.Si(2), xr - x0, statusH);
+            status.RightText = Theme.Coord(xr, bottom.Top);
+
+            int hy = tabs.Bottom + Theme.Si(10);
+            int hh = headline.Measure(xr - x0);
+            headline.SetBounds(x0, hy, xr - x0, hh);
+
+            int ly = headline.Bottom + Theme.Si(8);
+            int lh = Math.Max(Theme.Si(160), status.Top - Theme.Si(10) - ly);
+            int listW = (int)((xr - x0) * 0.56);
+            results.SetBounds(x0, ly, listW, lh);
+            detail.SetBounds(x0 + listW + Theme.Si(16), ly, xr - (x0 + listW + Theme.Si(16)) + Theme.Si(10), lh);
+        }
 
         // ---------------- Wiring ----------------
 
         void Wire()
         {
             findButton.Click += (s, e) => StartScan();
-            drivePicker.Click += (s, e) => driveMenu.Show(drivePicker, new Point(0, drivePicker.Height + Theme.Si(4)));
             filter.Box.TextChanged += (s, e) => FillResults(false);
+            tabs.SelectedIndexChanged += (s, e) => ChooseDrive(tabs.SelectedIndex > 0 && tabs.SelectedIndex - 1 < drives.Count ? drives[tabs.SelectedIndex - 1] : null);
+            header.ThemePicked += (s, dark) => { Theme.SetDark(dark); SaveThemeSetting(); };
 
             results.SelectionChanged += (s, e) => ShowDetails();
             results.ItemActivated += (s, e) => OpenTag(results.SelectedTag);
@@ -246,36 +311,26 @@ namespace SpaceSleuth.UI
             detail.Files.KeyDown += (s, e) => { if (e.Control && e.KeyCode == Keys.C) { CopyTag(detail.Files.SelectedFile); e.Handled = true; } };
         }
 
-        void BuildDriveMenu()
+        void BuildDrives()
         {
             try { drives = ScanEngine.AvailableDrives(); } catch { drives = new List<DriveChoice>(); }
-            driveMenu.Items.Clear();
-            var all = Theme.MenuItem("All drives", (s, e) => ChooseDrive(null));
-            all.Checked = chosenDrive == null;
-            driveMenu.Items.Add(all);
-            if (drives.Count > 0) driveMenu.Items.Add(new ToolStripSeparator());
-            foreach (var d in drives)
-            {
-                var drive = d;
-                var item = Theme.MenuItem(d.ToString(), (s, e) => ChooseDrive(drive));
-                item.Checked = chosenDrive != null && chosenDrive.Drive == d.Drive;
-                driveMenu.Items.Add(item);
-            }
+            tabs.Items.Clear();
+            tabs.Items.Add("all drives");
+            foreach (var d in drives) tabs.Items.Add(d.Drive.ToLowerInvariant());
+#if PREVIEW
+            drives.Clear(); tabs.Items.Clear(); tabs.Items.Add("all drives"); tabs.Items.Add("c:"); tabs.Items.Add("d:");
+#endif
         }
 
         void ChooseDrive(DriveChoice d)
         {
             chosenDrive = d;
-            drivePicker.Text = d == null ? "All drives" : d.Drive + (string.IsNullOrEmpty(d.Label) ? "" : " " + d.Label);
-            BuildDriveMenu();
-            PerformLayout();
         }
 
         void BuildItemMenu()
         {
-            var open = Theme.MenuItem("Open in File Explorer", (s, e) => OpenTag(MenuTag()));
-            open.Font = Theme.Ui(14, Weight.Semibold);
-            var copy = Theme.MenuItem("Copy path", (s, e) => CopyTag(MenuTag()));
+            var open = Theme.MenuItem("open in file explorer", (s, e) => OpenTag(MenuTag()));
+            var copy = Theme.MenuItem("copy path", (s, e) => CopyTag(MenuTag()));
             itemMenu.Items.Add(open);
             itemMenu.Items.Add(copy);
             itemMenu.Opening += (s, e) =>
@@ -284,7 +339,7 @@ namespace SpaceSleuth.UI
                 string target = OpenTargetFor(tag);
                 if (tag == null || (target == null && PathFor(tag) == null)) { e.Cancel = true; return; }
                 open.Enabled = target != null;
-                open.Text = target != null && !target.Contains("\\") ? "Open settings" : "Open in File Explorer";
+                open.Text = target != null && !target.Contains("\\") ? "open settings" : "open in file explorer";
                 copy.Enabled = PathFor(tag) != null;
             };
             results.ContextMenuStrip = itemMenu;
@@ -305,8 +360,8 @@ namespace SpaceSleuth.UI
             {
                 cts.Cancel();
                 findButton.Enabled = false;
-                findButton.Text = "Stopping…";
-                SetStatus("Wrapping up…", true);
+                findButton.Text = "stopping…";
+                SetStatus("wrapping up…", true);
                 return;
             }
 
@@ -336,25 +391,24 @@ namespace SpaceSleuth.UI
             opt.Window = window;
             if (opt.Drives.Count == 0)
             {
-                headline.Plain = "Hmm — there are no drives to look at.";
-                headline.Invalidate();
+                SetHeadline("no drives to look at.", null, null);
                 return;
             }
 
             cts = new CancellationTokenSource();
             var token = cts.Token;
             findButton.Text = StopText;
-            windowPicker.Enabled = drivePicker.Enabled = thorough.Enabled = false;
+            windowPicker.Enabled = tabs.Enabled = thorough.Enabled = false;
             status.Busy = true;
 
-            SetHeadline("Looking around your drives…", null, null);
-            ShowScanningBanner(opt.Drives);
+            SetHeadline("looking around your drives…", null, null);
+            headline.Caption = "fig. 02 / scanning — " + windowPhrase;
+            ShowScanningData(opt.Drives);
             results.Clear();
             results.State = ListMood.Scanning;
-            results.MoodTitle = "Looking around…";
-            results.MoodText = "Checking " + string.Join(", ", opt.Drives) + " for what changed " + windowPhrase + ". This usually takes a few seconds.";
-            detail.MascotMood = Mood.Searching;
-            detail.PlaceholderTitle = "Hang tight \u2014 cards show up in a moment.";
+            results.MoodTitle = "looking.";
+            results.MoodText = "checking " + string.Join(", ", opt.Drives) + " for what changed " + windowPhrase + ". usually a few seconds.";
+            detail.PlaceholderTitle = "hang on.";
             detail.SetItem(null, null);
             PerformLayout();
 
@@ -364,42 +418,38 @@ namespace SpaceSleuth.UI
                 var res = await Task.Run(() => ScanEngine.Run(opt, progress, token));
                 result = res;
                 ShowResult();
-                SetStatus("All done in " + res.Elapsed.TotalSeconds.ToString("0.0") + " s — double-click any card to open it.", true);
+                SetStatus("done in " + res.Elapsed.TotalSeconds.ToString("0.0") + " s. double-click a row to open it.", true);
             }
             catch (OperationCanceledException)
             {
-                SetHeadline("Okay — stopped.", null, null);
-                banner.State = DriveBanner.Mode.Hidden;
-                headline.HideLine = false;
+                SetHeadline("stopped.", null, null);
+                data.State = DataColumn.Mode.NoDrive;
                 results.State = ListMood.Stopped;
-                results.MoodTitle = "Okay — stopped.";
-                results.MoodText = "Run it again whenever you like.";
-                detail.MascotMood = Mood.Calm;
-                SetStatus("Stopped.", true);
+                results.MoodTitle = "stopped.";
+                results.MoodText = "run it again whenever you like.";
+                SetStatus("stopped.", true);
             }
             catch (Exception ex)
             {
-                SetHeadline("Hmm, something got in the way.", null, null);
-                banner.State = DriveBanner.Mode.Hidden;
-                headline.HideLine = false;
+                SetHeadline("something got in the way.", null, null);
+                data.State = DataColumn.Mode.NoDrive;
                 results.State = ListMood.Error;
-                results.MoodTitle = "Hmm, something got in the way.";
+                results.MoodTitle = "hm.";
                 results.MoodText = ex.Message;
-                detail.MascotMood = Mood.Worried;
-                SetStatus("Problem: " + ex.Message, true);
+                SetStatus("problem: " + ex.Message, true);
             }
             finally
             {
-                detail.PlaceholderTitle = "Pick a card to see what's inside.";
+                detail.PlaceholderTitle = "pick a row.";
                 if (results.SelectedTag == null) detail.SetItem(null, null);
                 cts.Dispose();
                 cts = null;
                 findButton.Text = FindText;
                 findButton.Enabled = true;
-                windowPicker.Enabled = drivePicker.Enabled = thorough.Enabled = true;
+                windowPicker.Enabled = tabs.Enabled = thorough.Enabled = true;
                 status.Busy = false;
                 results.Invalidate();
-                detail.Invalidate();
+                data.Invalidate();
                 PerformLayout();
             }
         }
@@ -421,9 +471,11 @@ namespace SpaceSleuth.UI
             headline.Plain = plain;
             headline.Amount = amount;
             headline.Target = target;
-            headline.Chips.Clear();
+            headline.Summary = null;
+            headline.Caption = "fig. 02 / most likely — " + windowPhrase;
             headline.Notes.Clear();
             headline.Invalidate();
+            PerformLayout();
         }
 
         // ---------------- Showing results ----------------
@@ -435,27 +487,31 @@ namespace SpaceSleuth.UI
             return cut >= 0 && cut < p.Length - 1 ? p.Substring(cut + 1) : path;
         }
 
-        const string MainDrive = "C:";
-
-        void ShowScanningBanner(IList<string> scanned)
+        void ShowScanningData(IList<string> scanned)
         {
+            data.Slices.Clear();
+            data.NotFound = 0;
+            data.Footnote = null;
+            data.Method = null;
+            data.WindowText = windowPhrase.StartsWith("since") ? "since last scan" : windowPhrase.Replace("in the ", "");
             if (!scanned.Any(d => string.Equals(d, MainDrive, StringComparison.OrdinalIgnoreCase)))
             {
-                banner.State = DriveBanner.Mode.Hidden;
-                headline.HideLine = false;
+                data.State = DataColumn.Mode.NoDrive;
+                data.Invalidate();
                 return;
             }
             long was; DateTime when;
             bool known = false;
             try { known = ScanEngine.TryLastScan(MainDrive, out was, out when); }
             catch { was = 0; when = DateTime.MinValue; }
-            banner.Drive = MainDrive;
-            banner.WasFree = known ? was : (long?)null;
-            banner.WasUtc = known ? when : (DateTime?)null;
-            try { banner.NowFree = ScanEngine.FreeNow(MainDrive); } catch { }
-            banner.State = DriveBanner.Mode.Scanning;
-            banner.Invalidate();
-            headline.HideLine = true;
+            data.Drive = MainDrive;
+            data.WasFree = known ? was : (long?)null;
+            data.WasUtc = known ? when : (DateTime?)null;
+            try { data.NowFree = ScanEngine.FreeNow(MainDrive); } catch { }
+            var choice = drives.FirstOrDefault(d => string.Equals(d.Drive, MainDrive, StringComparison.OrdinalIgnoreCase));
+            if (choice != null) data.TotalBytes = choice.TotalBytes;
+            data.State = DataColumn.Mode.Scanning;
+            data.Invalidate();
         }
 
         static bool OnDrive(Culprit c, string drive)
@@ -473,31 +529,34 @@ namespace SpaceSleuth.UI
         static string ShortName(Culprit c)
         {
             if (c.Kind == CulpritKind.Folder) return LastSegment(c.Path);
-            if (c.Kind == CulpritKind.SystemArea && c.Label.StartsWith("System Restore")) return "Restore points";
+            if (c.Kind == CulpritKind.SystemArea && c.Label.StartsWith("System Restore")) return "restore points";
             return c.Label;
         }
 
-        /// <summary>C: was X free at your last scan, now Y: fills the banner and splits the drop into where it went.</summary>
-        void FillBanner(ScanResult r)
+        /// <summary>fig. 01: C: was X free at your last scan, now Y, and where the drop most likely went.</summary>
+        void FillData(ScanResult r)
         {
             var rep = r.Drives.FirstOrDefault(d => string.Equals(d.Drive, MainDrive, StringComparison.OrdinalIgnoreCase));
-            banner.Slices.Clear();
-            banner.NotFound = 0;
-            banner.Footnote = null;
-            banner.Amount = banner.Target = banner.Sentence = null;
+            data.Slices.Clear();
+            data.NotFound = 0;
+            data.Footnote = null;
+            data.WindowText = windowPhrase.StartsWith("since") ? "since last scan" : windowPhrase.Replace("in the ", "");
             if (rep == null)
             {
-                banner.State = DriveBanner.Mode.Hidden;
-                headline.HideLine = false;
+                data.State = DataColumn.Mode.NoDrive;
+                data.Method = null;
+                data.Invalidate();
                 return;
             }
 
-            banner.Drive = MainDrive;
-            banner.NowFree = rep.FreeBytes;
-            banner.WasFree = rep.PrevFreeBytes;
-            banner.WasUtc = rep.PrevScanUtc;
-            banner.State = rep.PrevFreeBytes.HasValue ? DriveBanner.Mode.Result : DriveBanner.Mode.FirstLook;
-            headline.HideLine = true;
+            data.Drive = MainDrive;
+            data.NowFree = rep.FreeBytes;
+            data.TotalBytes = rep.TotalBytes;
+            data.WasFree = rep.PrevFreeBytes;
+            data.WasUtc = rep.PrevScanUtc;
+            data.Method = rep.Method;
+            data.State = rep.PrevFreeBytes.HasValue ? DataColumn.Mode.Result : DataColumn.Mode.FirstLook;
+            data.Invalidate();
             if (!rep.PrevFreeBytes.HasValue) return;
 
             long drop = rep.PrevFreeBytes.Value - rep.FreeBytes;
@@ -512,35 +571,23 @@ namespace SpaceSleuth.UI
             if (drop <= 0)
             {
                 if (found >= 1024L * 1024 * 1024)
-                    banner.Footnote = "Still, " + Format.Bytes(found) + " of new data showed up on " + MainDrive + " \u2014 it's in the list below. Something else must have freed up even more.";
+                    data.Footnote = "still, " + Format.Bytes(found) + " of new data showed up on " + MainDrive + " — it's in the list. something else freed up even more.";
                 return;
             }
 
-            // Most likely place for the C: drop
-            var top = onC.FirstOrDefault();
-            if (top != null)
-            {
-                banner.Amount = (top.AddedBytes > 0 ? "" : "~") + Format.Bytes(BytesOf(top));
-                banner.Target = top.Kind == CulpritKind.SystemArea && top.EstimateBytes > 0 && top.AddedBytes == 0 ? "a new restore point" : ShortName(top);
-            }
-            else
-            {
-                banner.Sentence = "Couldn't trace this one to specific files yet.";
-            }
-
             foreach (var c in onC.Take(3))
-                banner.Slices.Add(new DriveBanner.Slice { Name = ShortName(c), Bytes = BytesOf(c), Hue = Theme.For(c), Estimate = c.AddedBytes == 0 });
-            long rest = found - banner.Slices.Sum(x => x.Bytes);
-            if (rest > 0) banner.Slices.Add(new DriveBanner.Slice { Name = "Everything else", Bytes = rest, Hue = Theme.HNeutral });
-            banner.NotFound = Math.Max(0, drop - found);
+                data.Slices.Add(new DataColumn.Slice { Name = ShortName(c), Bytes = BytesOf(c), Color = Theme.For(c), Estimate = c.AddedBytes == 0 });
+            long rest = found - data.Slices.Sum(x => x.Bytes);
+            if (rest > 0) data.Slices.Add(new DataColumn.Slice { Name = "everything else", Bytes = rest, Color = Theme.Grey });
+            data.NotFound = Math.Max(0, drop - found);
 
             bool partialWindow = windowPicker.SelectedIndex != 0 && rep.PrevScanUtc.HasValue && rep.PrevScanUtc.Value < r.CutoffUtc;
             if (partialWindow)
-                banner.Footnote = "You're only looking " + windowPhrase + ". Pick \u201cSince last scan\u201d to cover the whole drop.";
+                data.Footnote = "you're only looking " + windowPhrase + ". pick “since last scan” to cover the whole drop.";
             else if (found > drop + drop / 10)
-                banner.Footnote = "Found " + Format.Bytes(found) + " of new data \u2014 more than the drop, because some space was also freed up in the same time (deleted files, cleanup).";
-            else if (banner.NotFound > Math.Max(512L * 1024 * 1024, drop / 10))
-                banner.Footnote = "\u201cNot found yet\u201d is space that couldn't be traced \u2014 usually temporary files that came and went, or restore points Windows already cleaned up.";
+                data.Footnote = "found " + Format.Bytes(found) + " of new data — more than the drop, because some space was also freed in the same time (deleted files, cleanup).";
+            else if (data.NotFound > Math.Max(512L * 1024 * 1024, drop / 10))
+                data.Footnote = "“not found yet” is space that couldn't be traced — usually temporary files that came and went, or restore points windows already cleaned up.";
         }
 
         void ShowResult()
@@ -549,40 +596,36 @@ namespace SpaceSleuth.UI
             var top = r.Culprits.FirstOrDefault(c => c.Kind != CulpritKind.Scattered);
 
             if (top == null)
-                SetHeadline(r.Culprits.Count == 0 ? "Nothing big showed up — your drive's been calm."
-                                                  : "Just little bits here and there — nothing big.", null, null);
+                SetHeadline(r.Culprits.Count == 0 ? "nothing big showed up. calm." : "just little bits here and there. nothing big.", null, null);
             else if (top.AddedBytes > 0)
                 SetHeadline(null, Format.Bytes(top.AddedBytes), top.Kind == CulpritKind.Folder ? LastSegment(top.Path) : top.Label);
             else if (top.EstimateBytes > 0)
                 SetHeadline(null, "~" + Format.Bytes(top.EstimateBytes), "a new restore point");
             else if (top.Kind == CulpritKind.SystemArea)
-                SetHeadline("A new restore point was made, but your free space barely changed.", null, null);
+                SetHeadline("a new restore point was made, but free space barely changed.", null, null);
             else
-                SetHeadline("Most likely, an existing file grew in " + LastSegment(top.Path) + ".", null, null);
+                SetHeadline("an existing file grew in " + LastSegment(top.Path) + ".", null, null);
 
-            FillBanner(r);
-            bool bannerShown = banner.State != DriveBanner.Mode.Hidden;
-            // With only C: scanned, the banner already says all of this.
-            if (!bannerShown || r.Drives.Count > 1)
-                headline.Chips.Add(new KeyValuePair<string, Hue>(Format.Bytes(r.TotalAdded) + " new " + windowPhrase, Theme.HSky));
+            FillData(r);
+            bool cShown = data.State == DataColumn.Mode.Result || data.State == DataColumn.Mode.FirstLook;
+            var summary = new List<string> { Format.Bytes(r.TotalAdded) + " new " + windowPhrase };
             foreach (var d in r.Drives)
             {
-                if (bannerShown && string.Equals(d.Drive, MainDrive, StringComparison.OrdinalIgnoreCase)) continue;
-                headline.Chips.Add(new KeyValuePair<string, Hue>(d.Drive + " has " + Format.Bytes(d.FreeBytes) + " free", Theme.HMint));
+                if (cShown && string.Equals(d.Drive, MainDrive, StringComparison.OrdinalIgnoreCase)) continue;
+                string s = d.Drive + " " + Format.Bytes(d.FreeBytes) + " free";
                 if (d.PrevFreeBytes.HasValue && d.PrevScanUtc.HasValue)
                 {
                     long change = d.FreeBytes - d.PrevFreeBytes.Value;
-                    headline.Chips.Add(new KeyValuePair<string, Hue>(
-                        (change == 0 ? "No change" : Format.SignedBytes(change)) + " since your last scan · " + Format.When(d.PrevScanUtc.Value),
-                        change < 0 ? Theme.HCoral : Theme.HMint));
+                    s += " (" + (change == 0 ? "no change" : Format.SignedBytes(change)) + " since last scan)";
                 }
+                summary.Add(s);
             }
+            headline.Summary = string.Join("  ·  ", summary);
             foreach (var d in r.Drives) if (!string.IsNullOrEmpty(d.Note)) headline.Notes.Add(d.Note);
-            headline.Notes.AddRange(r.Notes.Where(n => !(bannerShown && n.StartsWith("Free space on " + MainDrive))));
+            headline.Notes.AddRange(r.Notes.Where(n => !(cShown && n.StartsWith("Free space on " + MainDrive))));
             if (r.Drives.All(d => !d.PrevScanUtc.HasValue))
-                headline.Notes.Add("First look done. Next time, you'll also see exactly how much restore points, the page file and big existing files grew.");
+                headline.Notes.Add("first look done. next time you'll also see exactly how much restore points, the page file and big existing files grew.");
 
-            detail.MascotMood = r.Culprits.Count > 0 ? Mood.Grin : Mood.Calm;
             FillResults(true);
             PerformLayout();
         }
@@ -602,13 +645,13 @@ namespace SpaceSleuth.UI
                 results.State = ListMood.Empty;
                 if (f.Length > 0)
                 {
-                    results.MoodTitle = "Nothing matches “" + f + "”.";
-                    results.MoodText = "Try a shorter word, or clear the filter.";
+                    results.MoodTitle = "nothing.";
+                    results.MoodText = "no place matches “" + f + "”. try a shorter word, or clear the filter.";
                 }
                 else
                 {
-                    results.MoodTitle = "Your drive's been calm.";
-                    results.MoodText = "Nothing big showed up " + windowPhrase + ". Try a longer window if you're still missing space.";
+                    results.MoodTitle = "calm.";
+                    results.MoodText = "nothing big showed up " + windowPhrase + ". try a longer window if you're still missing space.";
                 }
                 results.Invalidate();
             }
@@ -662,7 +705,7 @@ namespace SpaceSleuth.UI
             }
             catch (Exception ex)
             {
-                SetStatus("Couldn't open that one: " + ex.Message, true);
+                SetStatus("couldn't open that one: " + ex.Message, true);
             }
         }
 
@@ -673,7 +716,7 @@ namespace SpaceSleuth.UI
             try
             {
                 Clipboard.SetText(p);
-                SetStatus("Nice — copied: " + p, true);
+                SetStatus("copied: " + p, true);
             }
             catch
             {

@@ -2,7 +2,7 @@
 
   <!--
     Targets .NET Framework 4.8, which ships inside every copy of Windows 11.
-    That keeps SpaceSleuth.exe tiny (a few hundred KB) with nothing extra to install.
+    That keeps Sleuth.exe small (well under 1 MB) with nothing extra to install.
   -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
@@ -10,13 +10,13 @@
     <LangVersion>7.3</LangVersion>
     <PlatformTarget>x64</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
-    <AssemblyName>SpaceSleuth</AssemblyName>
+    <AssemblyName>Sleuth</AssemblyName>
     <RootNamespace>SpaceSleuth</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <Nullable>disable</Nullable>
     <Version>1.0.0</Version>
-    <Product>Space Sleuth</Product>
+    <Product>Sleuth</Product>
     <Description>Shows where your disk space went recently.</Description>
     <Copyright>jehfslaps</Copyright>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
@@ -32,8 +32,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Unbounded Black (SIL Open Font License, see /licenses) for the wordmark -->
-    <EmbeddedResource Include="Assets\Unbounded-Black.ttf" LogicalName="SpaceSleuth.Unbounded.ttf" />
+    <!-- Glitch Swiss design kit: Archivo, JetBrains Mono, Unbounded (SIL Open Font License, see /licenses) and the grain tiles -->
+    <EmbeddedResource Include="Assets\fonts\*.ttf" LogicalName="Sleuth.Fonts.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Assets\textures\*.png" LogicalName="Sleuth.Textures.%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

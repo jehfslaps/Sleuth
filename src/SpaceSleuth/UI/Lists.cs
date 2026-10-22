@@ -8,8 +8,8 @@ using SpaceSleuth.Core;
 namespace SpaceSleuth.UI
 {
     /// <summary>
-    /// A smooth-scrolling list of custom-painted rows/cards with a slim pill scrollbar,
-    /// mouse + keyboard selection and double-click / Enter to activate.
+    /// A scrolling list of custom-painted rows with a thin square scrollbar, mouse + keyboard selection
+    /// and double-click / Enter to activate.
     /// </summary>
     internal abstract class ScrollList : Painted, IAnimated
     {
@@ -35,9 +35,6 @@ namespace SpaceSleuth.UI
         protected abstract void PaintItem(Graphics g, int index, RectangleF r, bool selected, bool hover);
         protected virtual bool IsSelectable(int index) { return true; }
         protected virtual void PaintEmpty(Graphics g) { }
-        protected virtual int PadX { get { return Theme.Si(4); } }
-        protected virtual int Gap { get { return Theme.Si(10); } }
-        protected virtual int PadTop { get { return Theme.Si(4); } }
 
         public int SelectedIndex
         {
@@ -54,21 +51,21 @@ namespace SpaceSleuth.UI
             }
         }
 
-        int ScrollbarSpace { get { return Theme.Si(14); } }
+        int ScrollbarSpace { get { return Theme.Si(12); } }
 
         public void Relayout()
         {
             int n = ItemCount;
             tops = new int[n];
             heights = new int[n];
-            int y = PadTop, w = Math.Max(10, Width - PadX * 2 - ScrollbarSpace);
+            int y = 0, w = Math.Max(10, Width - ScrollbarSpace);
             for (int i = 0; i < n; i++)
             {
                 tops[i] = y;
                 heights[i] = MeasureItem(i, w);
-                y += heights[i] + Gap;
+                y += heights[i];
             }
-            contentHeight = y + Theme.Si(10);
+            contentHeight = y + Theme.Si(8);
             if (selected >= n) selected = -1;
             targetY = scrollY = Clamp(scrollY);
             Invalidate();
@@ -93,15 +90,16 @@ namespace SpaceSleuth.UI
         public void EnsureVisible(int i)
         {
             if (i < 0 || i >= tops.Length) return;
-            if (tops[i] < targetY) ScrollTo(tops[i] - PadTop, true);
-            else if (tops[i] + heights[i] > targetY + Height) ScrollTo(tops[i] + heights[i] - Height + Theme.Si(12), true);
+            if (tops[i] < targetY) ScrollTo(tops[i], true);
+            else if (tops[i] + heights[i] > targetY + Height) ScrollTo(tops[i] + heights[i] - Height + Theme.Si(8), true);
         }
 
         public virtual void Tick(float now)
         {
             if (Math.Abs(targetY - scrollY) > 0.5f)
             {
-                scrollY += (targetY - scrollY) * 0.28f;
+                // quick and hard: no floaty easing
+                scrollY += (targetY - scrollY) * 0.5f;
                 if (Math.Abs(targetY - scrollY) <= 0.5f) scrollY = targetY;
                 Invalidate();
             }
@@ -115,16 +113,16 @@ namespace SpaceSleuth.UI
 
         RectangleF ItemRect(int i)
         {
-            return new RectangleF(PadX, tops[i] - scrollY, Width - PadX * 2 - ScrollbarSpace, heights[i]);
+            return new RectangleF(0, tops[i] - scrollY, Width - ScrollbarSpace, heights[i]);
         }
 
         RectangleF ThumbRect()
         {
             if (contentHeight <= Height) return RectangleF.Empty;
-            float trackH = Height - Theme.S(8);
+            float trackH = Height - Theme.S(4);
             float h = Math.Max(Theme.S(36), trackH * Height / contentHeight);
-            float y = Theme.S(4) + (trackH - h) * (scrollY / Math.Max(1, MaxScroll));
-            return new RectangleF(Width - Theme.S(10), y, Theme.S(6), h);
+            float y = Theme.S(2) + (trackH - h) * (scrollY / Math.Max(1, MaxScroll));
+            return new RectangleF(Width - Theme.S(5), y, Theme.S(3), h);
         }
 
         protected override void Draw(Graphics g)
@@ -142,7 +140,11 @@ namespace SpaceSleuth.UI
                 PaintItem(g, i, r, i == selected, i == hover);
             }
             var thumb = ThumbRect();
-            if (!thumb.IsEmpty) Theme.Fill(g, Theme.InkA(draggingThumb ? 90 : 45), thumb, thumb.Width / 2);
+            if (!thumb.IsEmpty)
+            {
+                Theme.Line(g, Theme.Hair2, Theme.S(1), thumb.X + thumb.Width / 2, 0, thumb.X + thumb.Width / 2, Height);
+                Theme.Rect(g, draggingThumb ? Theme.Red : Theme.Ink, thumb.X, thumb.Y, thumb.Width, thumb.Height);
+            }
         }
 
         int HitTest(Point p)
@@ -164,7 +166,7 @@ namespace SpaceSleuth.UI
             var thumb = ThumbRect();
             if (!thumb.IsEmpty && e.X >= Width - ScrollbarSpace)
             {
-                if (thumb.Contains(e.Location))
+                if (thumb.Y <= e.Y && e.Y <= thumb.Bottom)
                 {
                     draggingThumb = true;
                     dragOffset = e.Y - thumb.Y;
@@ -182,9 +184,9 @@ namespace SpaceSleuth.UI
         {
             if (draggingThumb)
             {
-                float trackH = Height - Theme.S(8);
+                float trackH = Height - Theme.S(4);
                 var thumb = ThumbRect();
-                float frac = (e.Y - dragOffset - Theme.S(4)) / Math.Max(1, trackH - thumb.Height);
+                float frac = (e.Y - dragOffset - Theme.S(2)) / Math.Max(1, trackH - thumb.Height);
                 ScrollTo(frac * MaxScroll, false);
             }
             else
@@ -267,11 +269,19 @@ namespace SpaceSleuth.UI
 
         protected override void OnGotFocus(EventArgs e) { Invalidate(); base.OnGotFocus(e); }
         protected override void OnLostFocus(EventArgs e) { Invalidate(); base.OnLostFocus(e); }
+
+        /// <summary>Row background: mint for the current row (like a selected file in MERCY's bake list), a faint wash on hover.</summary>
+        protected static void RowBack(Graphics g, RectangleF r, bool selected, bool hover)
+        {
+            if (selected) Theme.Rect(g, Theme.Mint, r.X, r.Y, r.Width, r.Height - Theme.S(1));
+            else if (hover) Theme.Rect(g, Theme.HoverRow, r.X, r.Y, r.Width, r.Height - Theme.S(1));
+            Theme.Line(g, Theme.Hair2, Theme.S(1), r.X, r.Bottom - 0.5f, r.Right, r.Bottom - 0.5f);
+        }
     }
 
     internal enum ListMood { Idle, Scanning, Empty, Stopped, Error }
 
-    /// <summary>The ranked result cards (most likely first), then the system-space cards.</summary>
+    /// <summary>The ranked places (most likely first), then the system-space rows.</summary>
     internal sealed class ResultList : ScrollList
     {
         sealed class Entry
@@ -283,12 +293,10 @@ namespace SpaceSleuth.UI
 
         readonly List<Entry> entries = new List<Entry>();
         public ListMood State = ListMood.Idle;
-        public string MoodTitle = "Ready when you are.";
-        public string MoodText = "Pick a time window and press “Find my space”.";
+        public string MoodTitle = "ready.";
+        public string MoodText = "pick a drive and a time window, then press find my space.";
 
         protected override int ItemCount { get { return entries.Count; } }
-        protected override int PadX { get { return Theme.Si(32); } }
-        protected override int Gap { get { return Theme.Si(12); } }
 
         public object SelectedTag
         {
@@ -306,15 +314,11 @@ namespace SpaceSleuth.UI
             var cs = culprits.ToList();
             var asx = areas.ToList();
             if (cs.Count > 0)
-            {
-                entries.Add(new Entry { Header = "Most likely → least likely", HeaderNote = cs.Count(c => c.Kind != CulpritKind.Scattered) + " places" });
-                foreach (var c in cs) entries.Add(new Entry { C = c });
-            }
+                entries.Add(new Entry { Header = "most likely → least likely.", HeaderNote = cs.Count(c => c.Kind != CulpritKind.Scattered).ToString("00") + " places" });
+            foreach (var c in cs) entries.Add(new Entry { C = c });
             if (asx.Count > 0)
-            {
-                entries.Add(new Entry { Header = "System space", HeaderNote = "restore points, hibernation, page file, Recycle Bin" });
-                foreach (var a in asx) entries.Add(new Entry { A = a });
-            }
+                entries.Add(new Entry { Header = "system space.", HeaderNote = "restore points · hibernation · page file · recycle bin" });
+            foreach (var a in asx) entries.Add(new Entry { A = a });
             ResetScroll();
             Relayout();
             SelectFirst();
@@ -339,13 +343,13 @@ namespace SpaceSleuth.UI
 
         protected override int MeasureItem(int index, int width)
         {
-            return entries[index].Header != null ? Theme.Si(index == 0 ? 30 : 44) : Theme.Si(108);
+            return entries[index].Header != null ? Theme.Si(index == 0 ? 34 : 54) : Theme.Si(80);
         }
 
         public override void Tick(float now)
         {
             base.Tick(now);
-            if (ItemCount == 0 && !Theme.ReducedMotion) Invalidate();
+            if (ItemCount == 0 && State == ListMood.Scanning && !Theme.ReducedMotion) Invalidate();
         }
 
         protected override void PaintItem(Graphics g, int index, RectangleF r, bool selected, bool hover)
@@ -353,108 +357,98 @@ namespace SpaceSleuth.UI
             var e = entries[index];
             if (e.Header != null)
             {
-                var hf = Theme.Ui(15, Weight.Bold);
-                float hw = Theme.Width(g, e.Header, hf);
-                Theme.Text(g, e.Header, hf, Theme.Ink, new RectangleF(r.X + Theme.S(4), r.Bottom - Theme.S(26), hw + Theme.S(4), Theme.S(24)));
-                Theme.Text(g, e.HeaderNote, Theme.Ui(12.5f, Weight.Regular), Theme.InkA(130),
-                    new RectangleF(r.X + hw + Theme.S(16), r.Bottom - Theme.S(26), r.Width - hw - Theme.S(20), Theme.S(24)));
+                float cy = r.Bottom - Theme.S(14);
+                float w = Theme.Label(g, e.Header, Theme.G(16, 600), Theme.Ink, r.X, cy);
+                Theme.Label(g, e.HeaderNote, Theme.M(9.5f), Theme.Grey, r.X + w + Theme.S(12), cy);
+                Theme.Line(g, Theme.Hair, Theme.S(1), r.X, r.Bottom - 0.5f, r.Right, r.Bottom - 0.5f);
                 return;
             }
-            if (e.C != null) PaintCulprit(g, e.C, r, selected, hover);
-            else PaintArea(g, e.A, r, selected, hover);
+            RowBack(g, r, selected, hover);
+            if (e.C != null) PaintCulprit(g, e.C, r, selected);
+            else PaintArea(g, e.A, r, selected);
         }
 
-        void CardBack(Graphics g, Hue hue, RectangleF r, bool selected, bool hover)
+        static Color InkOn(bool selected) { return selected ? Theme.OnMint : Theme.Ink; }
+        static Color Ink2On(bool selected) { return selected ? Theme.OnMint2 : Theme.Ink2; }
+        static Color GreyOn(bool selected) { return selected ? Theme.OnMint2 : Theme.Grey; }
+
+        void PaintCulprit(Graphics g, Culprit c, RectangleF r, bool sel)
         {
-            float rad = Theme.S(26);
-            if (selected)
-            {
-                Theme.Card(g, hue.Tint, r, rad, 20);
-                Theme.Stroke(g, Color.FromArgb(Focused ? 200 : 120, hue.Base), Theme.S(2), r, rad);
-            }
-            else Theme.Card(g, hover ? Theme.Hex("#FFFEFA") : Theme.White, r, rad, hover ? 30 : 16);
-        }
+            float x0 = r.X + Theme.S(8), line1 = r.Y + Theme.S(21), line2 = r.Y + Theme.S(45), line3 = r.Y + Theme.S(62);
+            float rightW = Theme.S(176), right = r.Right - Theme.S(12);
+            float textRight = right - rightW;
 
-        void Badge(Graphics g, Hue hue, RectangleF r, string text, bool sparkle)
-        {
-            float d = Theme.S(46);
-            var b = new RectangleF(r.X + Theme.S(18), r.Y + (r.Height - d) / 2, d, d);
-            using (var br = new SolidBrush(hue.Base)) g.FillEllipse(br, b);
-            if (sparkle) Theme.Sparkle(g, b.X + d / 2, b.Y + d / 2, d * 0.28f, Color.White);
-            else Theme.Text(g, text, Theme.Ui(text.Length > 2 ? 14 : 18, Weight.Bold), Color.White, b, StringAlignment.Center);
-        }
+            Theme.Label(g, c.Kind == CulpritKind.Scattered ? "··" : c.Rank.ToString("00"), Theme.M(10), GreyOn(sel), x0, line1);
+            Theme.Toner(g, Theme.For(c), new RectangleF(x0 + Theme.S(30), line1 - Theme.S(5), Theme.S(10), Theme.S(10)), c.Rank + 11);
 
-        void PaintCulprit(Graphics g, Culprit c, RectangleF r, bool selected, bool hover)
-        {
-            var hue = Theme.For(c);
-            CardBack(g, hue, r, selected, hover);
-            Badge(g, hue, r, c.Kind == CulpritKind.Scattered ? "…" : c.Rank.ToString(), c.Kind == CulpritKind.SystemArea);
-
-            float rightW = Theme.S(170);
-            float x = r.X + Theme.S(80), right = r.Right - rightW - Theme.S(16);
-
-            // Right: amount + likelihood bar
-            string amount = c.AddedBytes > 0 ? Format.Bytes(c.AddedBytes)
-                          : c.EstimateBytes > 0 ? "~" + Format.Bytes(c.EstimateBytes)
-                          : c.PossibleBytes > 0 ? "up to " + Format.Bytes(c.PossibleBytes)
-                          : c.Kind == CulpritKind.SystemArea ? "about the same" : "\u2014";
-            bool big = c.AddedBytes > 0 || c.EstimateBytes > 0;
-            var amountFont = Theme.Ui(big ? 24 : 17, big ? Weight.Semibold : Weight.Medium);
-            var rr = new RectangleF(r.Right - rightW - Theme.S(20), r.Y + Theme.S(16), rightW, Theme.S(34));
-            Theme.Text(g, amount, amountFont, hue.Dark, rr, StringAlignment.Far);
-            float bw = Theme.S(124), bh = Theme.S(8);
-            var bar = new RectangleF(r.Right - Theme.S(20) - bw, r.Y + Theme.S(60), bw, bh);
-            Theme.Fill(g, selected ? Theme.White : hue.Tint, bar, bh / 2);
-            float fw = Math.Max(bh, (float)(bw * Math.Min(1, c.Likelihood)));
-            Theme.Fill(g, hue.Base, new RectangleF(bar.X, bar.Y, fw, bh), bh / 2);
-            Theme.Text(g, Format.Percent(c.Likelihood) + " likely", Theme.Ui(12, Weight.Medium), Theme.InkA(150),
-                new RectangleF(r.Right - rightW - Theme.S(20), r.Y + Theme.S(74), rightW, Theme.S(18)), StringAlignment.Far);
-
-            // Middle: name, path, chips
-            string title, sub;
+            string name;
             if (c.Kind == CulpritKind.Folder)
             {
                 string p = c.Path.TrimEnd('\\');
                 int cut = p.LastIndexOf('\\');
-                title = cut >= 0 && cut < p.Length - 1 ? p.Substring(cut + 1) : c.Path;
-                sub = c.Path;
+                name = cut >= 0 && cut < p.Length - 1 ? p.Substring(cut + 1) : c.Path;
             }
-            else
-            {
-                title = c.Kind == CulpritKind.SystemArea ? c.Path : "Little bits, here and there";
-                sub = c.Kind == CulpritKind.SystemArea ? c.Note : c.Label;
-            }
-            Theme.Text(g, title, Theme.Ui(17, Weight.Bold), Theme.Ink, new RectangleF(x, r.Y + Theme.S(14), right - x, Theme.S(26)));
-            Theme.Text(g, sub, Theme.Ui(12.5f, Weight.Regular), Theme.InkA(140), new RectangleF(x, r.Y + Theme.S(40), right - x, Theme.S(20)),
+            else name = c.Kind == CulpritKind.SystemArea ? c.Path : "little bits, here and there";
+            float nx = x0 + Theme.S(50);
+            Theme.Text(g, Theme.Lc(name), Theme.G(19, 550), InkOn(sel), new RectangleF(nx, line1 - Theme.S(14), textRight - nx, Theme.S(28)));
+
+            string sub = c.Kind == CulpritKind.Folder ? c.Path : c.Kind == CulpritKind.SystemArea ? c.Note : c.Label;
+            Theme.Text(g, Theme.Lc(sub), Theme.M(10), Ink2On(sel), new RectangleF(nx, line2 - Theme.S(8), textRight - nx, Theme.S(16)),
                 StringAlignment.Near, StringAlignment.Center, c.Kind == CulpritKind.Folder);
 
-            float cy = r.Y + Theme.S(68), cx = x;
-            var chips = new List<KeyValuePair<string, Hue>>();
-            if (c.Kind == CulpritKind.Folder)
+            // tags
+            var tags = new List<KeyValuePair<string, Color>>();
+            tags.Add(MkTag(Labeler.CategoryName(Labeler.CategoryOf(c)), GreyOn(sel)));
+            if (c.IsNewFolder) tags.Add(MkTag("new folder", GreyOn(sel)));
+            if (c.HiddenReason != null && c.Kind == CulpritKind.Folder) tags.Add(MkTag("hidden spot", Theme.Red));
+            if (c.Kind == CulpritKind.SystemArea && c.NewFiles > 0) tags.Add(MkTag(c.NewFiles == 1 ? "new restore point" : c.NewFiles + " new restore points", Theme.Red));
+            if (c.EstimateBytes > 0 && c.AddedBytes == 0) tags.Add(MkTag("estimate", GreyOn(sel)));
+            if (c.Kind == CulpritKind.Folder && !string.IsNullOrEmpty(c.Contents)) tags.Add(MkTag(ShortContents(c.Contents), GreyOn(sel)));
+            if (c.Confidence != "High" && c.Kind != CulpritKind.Scattered) tags.Add(MkTag("partly a guess", GreyOn(sel)));
+            if (c.Kind == CulpritKind.Scattered) tags.Add(MkTag((c.NewFiles + c.GrewFiles).ToString("N0") + " files", GreyOn(sel)));
+            tags.Add(MkTag(WhenText(c), GreyOn(sel)));
+            DrawTags(g, tags, nx, line3, textRight, sel);
+
+            // right: size + likelihood meter
+            string amount = c.AddedBytes > 0 ? Format.Bytes(c.AddedBytes)
+                          : c.EstimateBytes > 0 ? "~" + Format.Bytes(c.EstimateBytes)
+                          : c.PossibleBytes > 0 ? "up to " + Format.Bytes(c.PossibleBytes)
+                          : c.Kind == CulpritKind.SystemArea ? "about the same" : "—";
+            Theme.LabelRight(g, Theme.Lc(amount), Theme.M(c.AddedBytes > 0 || c.EstimateBytes > 0 ? 16 : 12, true), InkOn(sel), right, line1);
+            float mw = Theme.S(104);
+            Theme.Meter(g, right - mw - Theme.S(44), line2, mw, c.Likelihood, false, InkOn(sel));
+            Theme.LabelRight(g, Format.Percent(c.Likelihood), Theme.M(10), Ink2On(sel), right, line2);
+        }
+
+        void PaintArea(Graphics g, SystemArea a, RectangleF r, bool sel)
+        {
+            float x0 = r.X + Theme.S(8), line1 = r.Y + Theme.S(21), line2 = r.Y + Theme.S(45), line3 = r.Y + Theme.S(62);
+            float right = r.Right - Theme.S(12), textRight = right - Theme.S(176);
+            Theme.Label(g, "--", Theme.M(10), GreyOn(sel), x0, line1);
+            Theme.Toner(g, Theme.For(Category.System), new RectangleF(x0 + Theme.S(30), line1 - Theme.S(5), Theme.S(10), Theme.S(10)), 5);
+            float nx = x0 + Theme.S(50);
+            Theme.Text(g, Theme.Lc(a.Drive + " " + a.Name), Theme.G(19, 550), InkOn(sel), new RectangleF(nx, line1 - Theme.S(14), textRight - nx, Theme.S(28)));
+            Theme.Text(g, "uses " + Theme.Lc(Format.Bytes(a.CurrentBytes)) + " now" + (a.PreviousUtc.HasValue ? " · vs. " + Theme.Lc(Format.When(a.PreviousUtc.Value)) : " · first look"),
+                Theme.M(10), Ink2On(sel), new RectangleF(nx, line2 - Theme.S(8), textRight - nx, Theme.S(16)));
+            var tags = new List<KeyValuePair<string, Color>> { MkTag("system", GreyOn(sel)) };
+            if (a.ActiveInWindow) tags.Add(MkTag("busy in this window", Theme.Red));
+            if (!string.IsNullOrEmpty(a.Activity)) tags.Add(MkTag(a.Activity, GreyOn(sel)));
+            DrawTags(g, tags, nx, line3, textRight, sel);
+
+            string change = a.Delta.HasValue ? (a.Delta.Value == 0 ? "no change" : Format.SignedBytes(a.Delta.Value)) : "first look";
+            bool grew = a.Delta.HasValue && a.Delta.Value > 0;
+            Theme.LabelRight(g, Theme.Lc(change), Theme.M(grew ? 16 : 12, true), grew ? (sel ? Theme.OnMint : Theme.Red) : GreyOn(sel), right, line1);
+        }
+
+        static KeyValuePair<string, Color> MkTag(string s, Color c) { return new KeyValuePair<string, Color>(Theme.Lc(s), c); }
+
+        static void DrawTags(Graphics g, List<KeyValuePair<string, Color>> tags, float x, float cy, float right, bool sel)
+        {
+            var f = Theme.M(9.5f);
+            for (int i = 0; i < tags.Count && x < right - Theme.S(20); i++)
             {
-                chips.Add(Pair(Labeler.CategoryName(Labeler.CategoryOf(c)), hue));
-                if (c.IsNewFolder) chips.Add(Pair("New folder", Theme.HNeutral));
-                if (c.HiddenReason != null) chips.Add(Pair("Hidden spot", Theme.HCoral));
-                chips.Add(Pair(c.Label, Theme.HNeutral));
-                if (!string.IsNullOrEmpty(c.Contents)) chips.Add(Pair(ShortContents(c.Contents), Theme.HNeutral));
-                if (c.Confidence != "High") chips.Add(Pair("Partly a guess", Theme.HNeutral));
-            }
-            else if (c.Kind == CulpritKind.Scattered)
-            {
-                chips.Add(Pair((c.NewFiles + c.GrewFiles).ToString("N0") + " files", Theme.HMint));
-            }
-            else
-            {
-                chips.Add(Pair("System", Theme.HPurple));
-                if (c.NewFiles > 0) chips.Add(Pair(c.NewFiles == 1 ? "New restore point" : c.NewFiles + " new restore points", Theme.HOrange));
-                if (c.EstimateBytes > 0) chips.Add(Pair("Estimate", Theme.HNeutral));
-            }
-            chips.Add(Pair(WhenText(c), Theme.HNeutral));
-            foreach (var chip in chips)
-            {
-                float used = Theme.Chip(g, cx, cy, chip.Key, chip.Value, right - cx);
-                if (used <= 0) break;
-                cx += used + Theme.S(6);
+                if (i > 0) x += Theme.Label(g, " · ", f, sel ? Theme.OnMint2 : Theme.Grey, x, cy);
+                x += Theme.Label(g, tags[i].Key, f, tags[i].Value, x, cy, right - x);
             }
         }
 
@@ -467,72 +461,55 @@ namespace SpaceSleuth.UI
 
         static string ShortContents(string s)
         {
-            // "Mostly audio samples / instrument data (.wav 84%)" -> "Mostly .wav audio samples"
-            return s.Length > 46 ? s.Substring(0, 44) + "…" : s;
-        }
-
-        static KeyValuePair<string, Hue> Pair(string s, Hue h) { return new KeyValuePair<string, Hue>(s, h); }
-
-        void PaintArea(Graphics g, SystemArea a, RectangleF r, bool selected, bool hover)
-        {
-            var hue = Theme.HPurple;
-            CardBack(g, hue, r, selected, hover);
-            Badge(g, hue, r, "", true);
-            float rightW = Theme.S(170);
-            float x = r.X + Theme.S(80), right = r.Right - rightW - Theme.S(16);
-
-            string change = a.Delta.HasValue ? (a.Delta.Value == 0 ? "no change" : Format.SignedBytes(a.Delta.Value)) : "first look";
-            bool grew = a.Delta.HasValue && a.Delta.Value > 0;
-            Theme.Text(g, change, Theme.Ui(grew ? 22 : 16, grew ? Weight.Semibold : Weight.Medium), grew ? hue.Dark : Theme.InkA(150),
-                new RectangleF(r.Right - rightW - Theme.S(20), r.Y + Theme.S(18), rightW, Theme.S(32)), StringAlignment.Far);
-            Theme.Text(g, a.PreviousUtc.HasValue ? "vs. " + Format.When(a.PreviousUtc.Value) : "next scan shows the change",
-                Theme.Ui(12, Weight.Medium), Theme.InkA(140), new RectangleF(r.Right - rightW - Theme.S(20), r.Y + Theme.S(56), rightW, Theme.S(18)), StringAlignment.Far);
-
-            Theme.Text(g, a.Drive + "  " + a.Name, Theme.Ui(17, Weight.Bold), Theme.Ink, new RectangleF(x, r.Y + Theme.S(14), right - x, Theme.S(26)));
-            Theme.Text(g, "Uses " + Format.Bytes(a.CurrentBytes) + " right now", Theme.Ui(12.5f, Weight.Regular), Theme.InkA(140),
-                new RectangleF(x, r.Y + Theme.S(40), right - x, Theme.S(20)));
-            float cx = x, cy = r.Y + Theme.S(68);
-            if (a.ActiveInWindow) cx += Theme.Chip(g, cx, cy, "Busy in this window", Theme.HOrange, right - cx) + Theme.S(6);
-            if (!string.IsNullOrEmpty(a.Activity)) Theme.Chip(g, cx, cy, a.Activity, Theme.HNeutral, right - cx);
+            // "Mostly audio samples / instrument data (.wav 84%)" -> "mostly .wav (84%)"
+            int open = s.LastIndexOf('(');
+            if (s.StartsWith("Mostly") && open > 0 && s.EndsWith(")"))
+            {
+                string inner = s.Substring(open + 1, s.Length - open - 2);
+                int sp = inner.LastIndexOf(' ');
+                return sp > 0 ? "mostly " + inner.Substring(0, sp) + " (" + inner.Substring(sp + 1) + ")" : "mostly " + inner;
+            }
+            return s.Length > 40 ? s.Substring(0, 38) + "…" : s;
         }
 
         protected override void PaintEmpty(Graphics g)
         {
-            float size = Math.Min(Theme.S(150), Height * 0.42f);
-            float cx = Width / 2f, cy = Height * 0.38f;
-            float t = Theme.Now;
-            bool anim = !Theme.ReducedMotion;
+            float x = 0, y = Theme.S(26);
+            Theme.Split(g, MoodTitle, Theme.W(34), Theme.Ink, x, y);
+            float ty = y + Theme.S(56);
+            float th = Theme.WrappedHeight(g, Theme.Lc(MoodText), Theme.M(10.5f), Width - Theme.S(30));
+            Theme.Text(g, Theme.Lc(MoodText), Theme.M(10.5f), Theme.Ink2, new RectangleF(x, ty, Width - Theme.S(30), th + Theme.S(4)),
+                StringAlignment.Near, StringAlignment.Near, false, true);
 
-            // a little confetti behind the mascot
-            Theme.Flower(g, cx - size * 1.1f, cy - size * 0.45f, Theme.S(14), Theme.Sun, Theme.Orange);
-            Theme.Sparkle(g, cx + size * 1.15f, cy - size * 0.5f, Theme.S(12), Theme.Purple);
-            Theme.Clover(g, cx + size * 1.0f, cy + size * 0.45f, Theme.S(14), Theme.Mint);
-            Theme.Starburst(g, cx - size * 0.95f, cy + size * 0.5f, Theme.S(12), Theme.Pink);
-
-            Mood m = State == ListMood.Scanning ? Mood.Searching : State == ListMood.Error ? Mood.Worried :
-                     State == ListMood.Empty ? Mood.Grin : State == ListMood.Stopped ? Mood.Calm : Mood.Happy;
-            Mascot.DrawBody(g, cx - size * 0.15f, cy, size, m, t, false, anim);
-
-            float ty = cy + size * 0.75f;
-            Theme.Text(g, MoodTitle, Theme.Ui(20, Weight.Bold), Theme.Ink, new RectangleF(Theme.S(24), ty, Width - Theme.S(48), Theme.S(30)), StringAlignment.Center);
-            Theme.Text(g, MoodText, Theme.Ui(14, Weight.Regular), Theme.InkA(150),
-                new RectangleF(Theme.S(40), ty + Theme.S(34), Width - Theme.S(80), Theme.S(44)), StringAlignment.Center, StringAlignment.Near, false, true);
+            // a field of "scanned" grey sound blobs; while scanning they step across, hard
+            float top = ty + th + Theme.S(28);
+            if (top > Height - Theme.S(60)) return;
+            int shift = State == ListMood.Scanning && !Theme.ReducedMotion ? (int)(Theme.Now * 6) : 0;
+            float rowH = Theme.S(34), blobW = Theme.S(86);
+            int rows = Math.Min(6, (int)((Height - top - Theme.S(20)) / (rowH + Theme.S(10))));
+            for (int row = 0; row < rows; row++)
+            {
+                float yy = top + row * (rowH + Theme.S(10));
+                float offset = ((shift + row * 3) % 8) * Theme.S(12) * (row % 2 == 0 ? 1 : -1);
+                for (float bx = -blobW + offset; bx < Width - Theme.S(20); bx += blobW + Theme.S(14))
+                    Waves.Draw(g, new RectangleF(bx, yy, blobW, rowH), Theme.Scan, row * 31 + (int)(bx / Theme.S(1)), null);
+            }
+            if (State == ListMood.Scanning)
+            {
+                // the red dotted read head
+                float hx = Theme.S(40) + ((shift * 37) % Math.Max(1, (int)(Width - Theme.S(80))));
+                Theme.Dotted(g, Theme.Red, Theme.S(1), hx, top - Theme.S(10), hx, top + rows * (rowH + Theme.S(10)), 2, 3);
+                Theme.Label(g, Theme.Coord(hx, top), Theme.M(8), Theme.Ink, hx + Theme.S(6), top - Theme.S(4));
+            }
         }
     }
 
-    /// <summary>The files inside the selected result.</summary>
+    /// <summary>The files inside the selected place.</summary>
     internal sealed class FileList : ScrollList
     {
         List<ChangedFile> files = new List<ChangedFile>();
 
-        public FileList()
-        {
-            BackColor = Theme.White;
-        }
-
         protected override int ItemCount { get { return files.Count; } }
-        protected override int Gap { get { return Theme.Si(2); } }
-        protected override int PadTop { get { return 0; } }
 
         public ChangedFile SelectedFile
         {
@@ -547,37 +524,35 @@ namespace SpaceSleuth.UI
             Relayout();
         }
 
-        protected override int MeasureItem(int index, int width) { return Theme.Si(52); }
+        protected override int MeasureItem(int index, int width) { return Theme.Si(48); }
 
         protected override void PaintItem(Graphics g, int index, RectangleF r, bool selected, bool hover)
         {
             var f = files[index];
-            if (selected) Theme.Fill(g, Theme.Hex("#FFF1D2"), r, Theme.S(14));
-            else if (hover) Theme.Fill(g, Theme.Hex("#FFF9EC"), r, Theme.S(14));
+            RowBack(g, r, selected, hover);
+            Color ink = selected ? Theme.OnMint : Theme.Ink, ink2 = selected ? Theme.OnMint2 : Theme.Ink2;
+            float x = r.X + Theme.S(6), right = r.Right - Theme.S(8);
+            float line1 = r.Y + Theme.S(16), line2 = r.Y + Theme.S(33);
+            float rightW = Theme.S(130);
+            Theme.Text(g, Theme.Lc(f.Name), Theme.G(14.5f, 500), ink, new RectangleF(x, line1 - Theme.S(11), right - rightW - x, Theme.S(22)));
+            Theme.Text(g, Theme.Lc(Format.When(f.TimeUtc) + "  ·  " + f.Folder), Theme.M(9.5f), ink2,
+                new RectangleF(x, line2 - Theme.S(8), right - rightW - x, Theme.S(16)), StringAlignment.Near, StringAlignment.Center, true);
+            Theme.LabelRight(g, Theme.Lc(Format.Bytes(f.SizeOnDisk)), Theme.M(12, true), ink, right, line1);
 
-            float rightW = Theme.S(150);
-            float x = r.X + Theme.S(12), right = r.Right - rightW - Theme.S(8);
-            Theme.Text(g, f.Name, Theme.Ui(14, Weight.Semibold), Theme.Ink, new RectangleF(x, r.Y + Theme.S(6), right - x, Theme.S(22)));
-            Theme.Text(g, Format.When(f.TimeUtc) + "  ·  " + f.Folder, Theme.Ui(12, Weight.Regular), Theme.InkA(130),
-                new RectangleF(x, r.Y + Theme.S(28), right - x, Theme.S(18)), StringAlignment.Near, StringAlignment.Center, true);
-
-            Theme.Text(g, Format.Bytes(f.SizeOnDisk), Theme.Ui(14, Weight.Semibold), Theme.Ink,
-                new RectangleF(r.Right - rightW - Theme.S(12), r.Y + Theme.S(6), rightW, Theme.S(22)), StringAlignment.Far);
-            string change; Hue hue;
+            string change; Color sq;
             switch (f.Kind)
             {
-                case ChangeKind.New: change = "New file"; hue = Theme.HMint; break;
-                case ChangeKind.GrewKnown: change = "Grew " + Format.SignedBytes(f.AddedBytes); hue = Theme.HOrange; break;
-                default: change = "Modified"; hue = Theme.HCoral; break;
+                case ChangeKind.New: change = "new"; sq = Theme.Mint; break;
+                case ChangeKind.GrewKnown: change = "grew " + Theme.Lc(Format.SignedBytes(f.AddedBytes)); sq = Theme.Yellow; break;
+                default: change = "modified"; sq = Theme.Scan; break;
             }
-            float cw = Theme.Width(g, change, Theme.Ui(12, Weight.Medium)) + Theme.S(34);
-            Theme.Chip(g, r.Right - Theme.S(12) - cw, r.Y + Theme.S(28), change, hue, cw, 20);
+            float cw = Theme.LabelRight(g, change, Theme.M(9.5f), ink2, right, line2);
+            Theme.Rect(g, selected && sq == Theme.Mint ? Theme.OnMint : sq, right - cw - Theme.S(11), line2 - Theme.S(3.5f), Theme.S(7), Theme.S(7));
         }
 
         protected override void PaintEmpty(Graphics g)
         {
-            Theme.Text(g, "No individual files to show here.", Theme.Ui(13, Weight.Regular), Theme.InkA(130),
-                new RectangleF(0, 0, Width, Theme.S(40)), StringAlignment.Center);
+            Theme.Label(g, "no individual files to show here.", Theme.M(10), Theme.Grey, 0, Theme.S(14));
         }
     }
 }

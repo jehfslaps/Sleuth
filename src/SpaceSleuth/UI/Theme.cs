@@ -11,56 +11,64 @@ using SpaceSleuth.Core;
 
 namespace SpaceSleuth.UI
 {
-    /// <summary>One semantic color: the solid core color, its pale tint, and a darker shade for text on the tint.</summary>
-    internal sealed class Hue
-    {
-        public readonly Color Base, Tint, Dark;
-        public Hue(Color b, Color t, Color d) { Base = b; Tint = t; Dark = d; }
-    }
-
-    internal enum Weight { Light, Regular, Medium, Semibold, Bold }
-
     /// <summary>
-    /// "Soft Sticker Pop" design tokens: cream paper, oxblood ink, candy accents, pills and big rounded corners.
+    /// "Glitch Swiss: sound as data" (the MERCY design kit by jehf slaps), applied to Sleuth.
+    /// A clean Swiss layout that has been through a broken photocopier: paper ground, hairlines,
+    /// lowercase grotesk, tiny mono lab labels, flat accent blocks, pixel stairs and grain over everything.
     /// </summary>
     internal static class Theme
     {
-        // Core palette
-        public static readonly Color Purple = Hex("#B177ED");
-        public static readonly Color Orange = Hex("#FF7B03");
-        public static readonly Color Sky = Hex("#7DB8F2");
-        public static readonly Color Coral = Hex("#F47B6A");
-        public static readonly Color Mint = Hex("#69E094");
+        // ---------------- Mode ----------------
 
-        // Supporting
-        public static readonly Color Cream = Hex("#FFFCF2");
-        public static readonly Color Ink = Hex("#4A0E12");
-        public static readonly Color Blue = Hex("#5B84F1");
-        public static readonly Color BlueDeep = Hex("#4C74DE");
-        public static readonly Color Indigo = Hex("#5A67D8");
-        public static readonly Color Forest = Hex("#0E5640");
-        public static readonly Color Lime = Hex("#D2F04A");
-        public static readonly Color Pink = Hex("#F6A3E8");
-        public static readonly Color Butter = Hex("#FCEFB0");
-        public static readonly Color OffWhite = Hex("#FFF8E6");
-        public static readonly Color Sun = Hex("#FFB10A");
-        public static readonly Color Leaf = Hex("#4FA552");
-        public static readonly Color Lavender = Hex("#CDBDF9");
-        public static readonly Color White = Color.White;
-        public static readonly Color Outline = Hex("#1E0B0C");
-        public static readonly Color Sand = Hex("#F3EBDA");
+        public static bool Dark;
+        public static event EventHandler Changed;
 
-        // Semantic hues (one consistent color per kind of result)
-        public static readonly Hue HPurple = new Hue(Purple, Hex("#E4D2FB"), Hex("#6A3AA3"));
-        public static readonly Hue HOrange = new Hue(Orange, Hex("#FDE3BC"), Hex("#A24B00"));
-        public static readonly Hue HSky = new Hue(Sky, Hex("#D3E8FA"), Hex("#2C68A6"));
-        public static readonly Hue HCoral = new Hue(Coral, Hex("#FAD0C9"), Hex("#A4392A"));
-        public static readonly Hue HMint = new Hue(Mint, Hex("#C8F5D8"), Hex("#1D7443"));
-        public static readonly Hue HIndigo = new Hue(Indigo, Hex("#DCDFF8"), Hex("#36409E"));
-        public static readonly Hue HPink = new Hue(Pink, Hex("#FCE0F6"), Hex("#8A2F7C"));
-        public static readonly Hue HNeutral = new Hue(Hex("#B9A99A"), Sand, Hex("#6E5A4C"));
+        public static void SetDark(bool dark)
+        {
+            if (Dark == dark) return;
+            Dark = dark;
+            if (Changed != null) Changed(null, EventArgs.Empty);
+        }
 
-        public static Color InkA(int alpha) { return Color.FromArgb(alpha, Ink); }
+        /// <summary>Follows Windows' "app mode" (light/dark) unless the user picked one in the app.</summary>
+        public static bool WindowsPrefersDark()
+        {
+            try
+            {
+                using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"))
+                {
+                    object v = k == null ? null : k.GetValue("AppsUseLightTheme");
+                    return v is int && (int)v == 0;
+                }
+            }
+            catch { return false; }
+        }
+
+        // ---------------- Color tokens (light / dark) ----------------
+
+        static Color L(string light, string dark) { return Hex(Dark ? dark : light); }
+
+        public static Color Paper { get { return L("#ECEAEB", "#110E12"); } }
+        public static Color Paper2 { get { return L("#E4E1E3", "#18151A"); } }
+        public static Color Side { get { return L("#E4E1E3", "#000000"); } }
+        public static Color Ink { get { return L("#110E12", "#ECEAEB"); } }
+        public static Color Ink2 { get { return Color.FromArgb(Dark ? 209 : 204, Ink); } }
+        public static Color Grey { get { return L("#625D66", "#8F8A92"); } }
+        public static Color Hair { get { return Color.FromArgb(Dark ? 66 : 77, Ink); } }
+        public static Color Hair2 { get { return Color.FromArgb(Dark ? 28 : 33, Ink); } }
+        public static Color Scan { get { return L("#CFCBD0", "#2C2830"); } }
+        public static Color HoverRow { get { return Color.FromArgb(Dark ? 18 : 15, Ink); } }
+        public static Color Blue { get { return L("#2630D1", "#3B46FF"); } }
+        public static Color Violet { get { return L("#2A0F4A", "#6A3CB8"); } }
+
+        // Shared accents
+        public static readonly Color Red = Hex("#E2290F");
+        public static readonly Color Pink = Hex("#DC7F89");
+        public static readonly Color Mint = Hex("#47E4AE");
+        public static readonly Color Yellow = Hex("#E2CC1E");
+        public static readonly Color Orange = Hex("#BF3E23");
+        public static readonly Color OnMint = Hex("#110E12");
+        public static readonly Color OnMint2 = Color.FromArgb(158, Hex("#110E12"));
 
         public static Color Hex(string hex)
         {
@@ -68,29 +76,28 @@ namespace SpaceSleuth.UI
             return Color.FromArgb(255, (v >> 16) & 255, (v >> 8) & 255, v & 255);
         }
 
-        /// <summary>
-        /// One consistent color per category, everywhere: libraries &amp; media = orange, your files = sky,
-        /// apps = indigo, games = pink, caches = mint, system = purple. (Coral is kept for "hidden spot" warnings.)
-        /// </summary>
-        public static Hue For(Category c)
+        /// <summary>One small flat square per kind of place, used everywhere (red is kept for "selected" and alerts).</summary>
+        public static Color For(Category c)
         {
             switch (c)
             {
-                case Category.Libraries: return HOrange;
-                case Category.YourFiles: return HSky;
-                case Category.Programs: return HIndigo;
-                case Category.Games: return HPink;
-                case Category.Caches: return HMint;
-                default: return HPurple;
+                case Category.Libraries: return Blue;
+                case Category.YourFiles: return Mint;
+                case Category.Programs: return Violet;
+                case Category.Games: return Yellow;
+                case Category.Caches: return Scan;
+                default: return Orange;
             }
         }
 
-        public static Hue For(Culprit c) { return For(Labeler.CategoryOf(c)); }
+        public static Color For(Culprit c) { return For(Labeler.CategoryOf(c)); }
+
+        /// <summary>Everything is lowercase in this language.</summary>
+        public static string Lc(string s) { return s == null ? null : s.ToLowerInvariant(); }
 
         // ---------------- Scale & motion ----------------
 
         static readonly System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
-        /// <summary>Seconds since the app started; drives all animation.</summary>
         public static float Now { get { return (float)clock.Elapsed.TotalSeconds; } }
 
         public static float Scale = 1f;
@@ -99,7 +106,7 @@ namespace SpaceSleuth.UI
 
         static bool? reducedMotion;
 
-        /// <summary>True when Windows' "Animation effects" setting is off; then nothing bobs, slides or bounces.</summary>
+        /// <summary>True when Windows' "Animation effects" setting is off.</summary>
         public static bool ReducedMotion
         {
             get
@@ -120,128 +127,47 @@ namespace SpaceSleuth.UI
         [DllImport("user32.dll", SetLastError = true)]
         static extern bool SystemParametersInfo(int action, int param, ref bool value, int winIni);
 
-        /// <summary>Springy ease with a little overshoot, like cubic-bezier(.34,1.56,.64,1).</summary>
-        public static float Spring(float x)
-        {
-            if (x <= 0) return 0;
-            if (x >= 1) return 1;
-            const float c1 = 1.70158f * 1.1f, c3 = c1 + 1;
-            float t = x - 1;
-            return 1 + c3 * t * t * t + c1 * t * t;
-        }
-
-        // ---------------- Fonts ----------------
+        // ---------------- Fonts (embedded, SIL OFL) ----------------
 
         static readonly Dictionary<string, Font> fontCache = new Dictionary<string, Font>();
-        static HashSet<string> installed;
-        static PrivateFontCollection privateFonts;
-        static FontFamily display;
+        static PrivateFontCollection fonts;
+        static readonly Dictionary<string, FontFamily> families = new Dictionary<string, FontFamily>(StringComparer.OrdinalIgnoreCase);
 
-        static bool Has(string family)
+        static void LoadFonts()
         {
-            if (installed == null)
+            if (fonts != null) return;
+            fonts = new PrivateFontCollection();
+            var asm = Assembly.GetExecutingAssembly();
+            foreach (var name in new[] { "SLArchivo500", "SLArchivo550", "SLArchivo600", "SLArchivo700", "SLMono", "SLMonoBold", "SLUnbounded" })
             {
-                installed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 try
                 {
-                    using (var c = new InstalledFontCollection())
-                        foreach (var f in c.Families) installed.Add(f.Name);
+                    using (var s = asm.GetManifestResourceStream("Sleuth.Fonts." + name + ".ttf"))
+                    {
+                        if (s == null) continue;
+                        var data = new byte[s.Length];
+                        int read = 0;
+                        while (read < data.Length)
+                        {
+                            int n = s.Read(data, read, data.Length - read);
+                            if (n <= 0) break;
+                            read += n;
+                        }
+                        // GDI+ needs the memory to stay alive for the life of the app, so it is never freed.
+                        IntPtr mem = Marshal.AllocCoTaskMem(data.Length);
+                        Marshal.Copy(data, 0, mem, data.Length);
+                        fonts.AddMemoryFont(mem, data.Length);
+
+                        // Some systems only accept private fonts from a file: keep one in temp as a fallback.
+                        string file = Path.Combine(Path.GetTempPath(), "Sleuth-" + name + ".ttf");
+                        try { if (!File.Exists(file) || new FileInfo(file).Length != data.Length) File.WriteAllBytes(file, data); } catch { }
+                        try { fonts.AddFontFile(file); } catch { }
+                    }
                 }
                 catch { }
             }
-            return installed.Contains(family);
-        }
-
-        /// <summary>UI text in pixels. Uses Segoe UI (Windows' own clean system font), falling back to Inter.</summary>
-        public static Font Ui(float px, Weight w)
-        {
-            string key = "ui" + px + w;
-            Font f;
-            if (fontCache.TryGetValue(key, out f)) return f;
-
-            string family; FontStyle style = FontStyle.Regular;
-            bool segoe = Has("Segoe UI");
-            if (segoe)
-            {
-                switch (w)
-                {
-                    case Weight.Light: family = Has("Segoe UI Light") ? "Segoe UI Light" : "Segoe UI"; break;
-                    case Weight.Medium:
-                    case Weight.Semibold: family = Has("Segoe UI Semibold") ? "Segoe UI Semibold" : "Segoe UI"; if (family == "Segoe UI") style = FontStyle.Bold; break;
-                    case Weight.Bold: family = "Segoe UI"; style = FontStyle.Bold; break;
-                    default: family = "Segoe UI"; break;
-                }
-            }
-            else
-            {
-                switch (w)
-                {
-                    case Weight.Light: family = Has("Inter Light") ? "Inter Light" : "Inter"; break;
-                    case Weight.Medium: family = Has("Inter Medium") ? "Inter Medium" : "Inter"; break;
-                    case Weight.Semibold: family = Has("Inter SemiBold") ? "Inter SemiBold" : "Inter"; if (family == "Inter") style = FontStyle.Bold; break;
-                    case Weight.Bold: family = "Inter"; style = FontStyle.Bold; break;
-                    default: family = "Inter"; break;
-                }
-                if (!Has(family)) family = FontFamily.GenericSansSerif.Name;
-            }
-            f = new Font(family, Math.Max(1f, px * Scale), style, GraphicsUnit.Pixel);
-            fontCache[key] = f;
-            return f;
-        }
-
-        /// <summary>The chunky display font (Unbounded Black, embedded) for the wordmark and big moments.</summary>
-        public static Font Display(float px)
-        {
-            string key = "display" + px;
-            Font f;
-            if (fontCache.TryGetValue(key, out f)) return f;
-            var fam = DisplayFamily();
-            f = fam != null
-                ? new Font(fam, px * Scale, FontStyle.Regular, GraphicsUnit.Pixel)
-                : Ui(px, Weight.Bold);
-            fontCache[key] = f;
-            return f;
-        }
-
-        static FontFamily DisplayFamily()
-        {
-            if (display != null || privateFonts != null) return display;
-            privateFonts = new PrivateFontCollection();
-            try
-            {
-                using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream("SpaceSleuth.Unbounded.ttf"))
-                {
-                    if (s == null) return null;
-                    var data = new byte[s.Length];
-                    int read = 0;
-                    while (read < data.Length)
-                    {
-                        int n = s.Read(data, read, data.Length - read);
-                        if (n <= 0) break;
-                        read += n;
-                    }
-                    // GDI+ needs the memory to stay alive for the life of the app, so it is never freed.
-                    IntPtr mem = Marshal.AllocCoTaskMem(data.Length);
-                    Marshal.Copy(data, 0, mem, data.Length);
-                    privateFonts.AddMemoryFont(mem, data.Length);
-                    if (privateFonts.Families.Length > 0 && Usable(privateFonts.Families[0])) display = privateFonts.Families[0];
-
-                    if (display == null)
-                    {
-                        // Some systems only accept private fonts from a file.
-                        string file = Path.Combine(Path.GetTempPath(), "SpaceSleuth-Unbounded-Black.ttf");
-                        File.WriteAllBytes(file, data);
-                        privateFonts = new PrivateFontCollection();
-                        privateFonts.AddFontFile(file);
-                        if (privateFonts.Families.Length > 0 && Usable(privateFonts.Families[0])) display = privateFonts.Families[0];
-                    }
-                }
-            }
-            catch
-            {
-                display = null;
-            }
-            return display;
+            foreach (var f in fonts.Families)
+                if (!families.ContainsKey(f.Name) && Usable(f)) families[f.Name] = f;
         }
 
         static bool Usable(FontFamily family)
@@ -257,6 +183,92 @@ namespace SpaceSleuth.UI
             }
         }
 
+        static Font Make(string key, string family, string fallback, FontStyle fallbackStyle, float px)
+        {
+            Font f;
+            if (fontCache.TryGetValue(key, out f)) return f;
+            LoadFonts();
+            FontFamily fam;
+            float size = Math.Max(1f, px * Scale);
+            f = families.TryGetValue(family, out fam)
+                ? new Font(fam, size, FontStyle.Regular, GraphicsUnit.Pixel)
+                : new Font(fallback, size, fallbackStyle, GraphicsUnit.Pixel);
+            fontCache[key] = f;
+            return f;
+        }
+
+        /// <summary>Archivo: the words people read and click. Weight 500, 550, 600 or 700.</summary>
+        public static Font G(float px, int weight = 500)
+        {
+            int w = weight >= 700 ? 700 : weight >= 600 ? 600 : weight >= 550 ? 550 : 500;
+            return Make("g" + px + "_" + w, "SL Archivo " + w, "Segoe UI", w >= 600 ? FontStyle.Bold : FontStyle.Regular, px);
+        }
+
+        /// <summary>JetBrains Mono: numbers, values, labels, coordinates.</summary>
+        public static Font M(float px, bool bold = false)
+        {
+            return Make("m" + px + bold, bold ? "SL Mono Bold" : "SL Mono", "Consolas", bold ? FontStyle.Bold : FontStyle.Regular, px);
+        }
+
+        /// <summary>Unbounded 800: the wordmark and panel titles only.</summary>
+        public static Font W(float px)
+        {
+            return Make("w" + px, "SL Unbounded", "Segoe UI Black", FontStyle.Regular, px);
+        }
+
+        // ---------------- Grain ----------------
+
+        static Bitmap grainLight, grainDark;
+
+        static Bitmap GrainTile()
+        {
+            try
+            {
+                if (Dark)
+                {
+                    if (grainDark == null) grainDark = LoadBitmap("Sleuth.Textures.grain_dark.png");
+                    return grainDark;
+                }
+                if (grainLight == null) grainLight = LoadBitmap("Sleuth.Textures.grain_light.png");
+                return grainLight;
+            }
+            catch { return null; }
+        }
+
+        static Bitmap LoadBitmap(string resource)
+        {
+            using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream(resource))
+                return s == null ? null : new Bitmap(s);
+        }
+
+        /// <summary>
+        /// Fine grain over everything, tiled from the window's corner so it lines up across every panel.
+        /// The tiles already carry their opacity (dark specks in light mode, light specks in dark mode).
+        /// </summary>
+        public static void Grain(Graphics g, Control c, Rectangle area)
+        {
+            var tile = GrainTile();
+            if (tile == null) return;
+            Point origin = Point.Empty;
+            try
+            {
+                var form = c.FindForm();
+                if (form != null) origin = form.PointToClient(c.PointToScreen(Point.Empty));
+            }
+            catch { }
+            using (var brush = new TextureBrush(tile, WrapMode.Tile))
+            {
+                float s = 0.5f * Scale; // 256 px tile = 128 design px
+                brush.ScaleTransform(s, s, MatrixOrder.Append);
+                brush.TranslateTransform(-origin.X, -origin.Y, MatrixOrder.Append);
+                var state = g.Save();
+                g.SmoothingMode = SmoothingMode.None;
+                g.InterpolationMode = InterpolationMode.NearestNeighbor;
+                g.FillRectangle(brush, area);
+                g.Restore(state);
+            }
+        }
+
         // ---------------- Drawing helpers ----------------
 
         public static void Quality(Graphics g)
@@ -265,46 +277,6 @@ namespace SpaceSleuth.UI
             g.PixelOffsetMode = PixelOffsetMode.HighQuality;
             g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-        }
-
-        public static GraphicsPath Round(RectangleF r, float radius)
-        {
-            var p = new GraphicsPath();
-            float d = Math.Min(radius * 2, Math.Min(r.Width, r.Height));
-            if (d <= 0.5f)
-            {
-                p.AddRectangle(r);
-                return p;
-            }
-            p.AddArc(r.X, r.Y, d, d, 180, 90);
-            p.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-            p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-            p.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-            p.CloseFigure();
-            return p;
-        }
-
-        public static void Fill(Graphics g, Color c, RectangleF r, float radius)
-        {
-            using (var p = Round(r, radius))
-            using (var b = new SolidBrush(c))
-                g.FillPath(b, p);
-        }
-
-        /// <summary>The soft card shadow: a 2px drop in 6% ink.</summary>
-        public static void Card(Graphics g, Color fill, RectangleF r, float radius, int shadowAlpha = 16)
-        {
-            var sh = r;
-            sh.Offset(0, S(2));
-            Fill(g, Color.FromArgb(shadowAlpha, Ink), sh, radius);
-            Fill(g, fill, r, radius);
-        }
-
-        public static void Stroke(Graphics g, Color c, float width, RectangleF r, float radius)
-        {
-            using (var p = Round(r, radius))
-            using (var pen = new Pen(c, width) { LineJoin = LineJoin.Round })
-                g.DrawPath(pen, p);
         }
 
         public static StringFormat Format(StringAlignment h, StringAlignment v, bool ellipsisPath = false, bool wrap = false)
@@ -321,10 +293,35 @@ namespace SpaceSleuth.UI
                                 StringAlignment h = StringAlignment.Near, StringAlignment v = StringAlignment.Center,
                                 bool ellipsisPath = false, bool wrap = false)
         {
-            if (string.IsNullOrEmpty(text)) return;
+            if (string.IsNullOrEmpty(text) || r.Width <= 1) return;
             using (var b = new SolidBrush(color))
             using (var f = Format(h, v, ellipsisPath, wrap))
                 g.DrawString(text, font, b, r, f);
+        }
+
+        /// <summary>Text with its left edge at x and its vertical centre at cy. Returns the width.</summary>
+        public static float Label(Graphics g, string text, Font font, Color color, float x, float cy, float maxW = 10000)
+        {
+            if (string.IsNullOrEmpty(text)) return 0;
+            float w = Math.Min(maxW, Width(g, text, font) + S(2));
+            Text(g, text, font, color, new RectangleF(x, cy - font.Height, w, font.Height * 2));
+            return w;
+        }
+
+        /// <summary>Right-aligned text ending at x, vertically centred at cy.</summary>
+        public static float LabelRight(Graphics g, string text, Font font, Color color, float right, float cy)
+        {
+            if (string.IsNullOrEmpty(text)) return 0;
+            float w = Width(g, text, font) + S(2);
+            Text(g, text, font, color, new RectangleF(right - w, cy - font.Height, w, font.Height * 2), StringAlignment.Far);
+            return w;
+        }
+
+        /// <summary>Right-aligned in its box when it fits, otherwise left-aligned and cut with an ellipsis.</summary>
+        public static void TextRightFit(Graphics g, string text, Font font, Color color, RectangleF r)
+        {
+            bool fits = Width(g, text, font) <= r.Width;
+            Text(g, text, font, color, r, fits ? StringAlignment.Far : StringAlignment.Near);
         }
 
         public static float Width(Graphics g, string text, Font font)
@@ -341,186 +338,166 @@ namespace SpaceSleuth.UI
                 return (float)Math.Ceiling(g.MeasureString(text, font, new SizeF(width, 10000), f).Height);
         }
 
-        /// <summary>Dot chip: pale tinted pill, solid dot on the left, tonal label. Returns the width used.</summary>
-        public static float Chip(Graphics g, float x, float y, string text, Hue hue, float maxWidth = 10000, float height = 24)
+        public static void Line(Graphics g, Color c, float w, float x1, float y1, float x2, float y2)
         {
-            var font = Ui(12, Weight.Medium);
-            float h = S(height), dot = S(10), padL = S(8), gap = S(6), padR = S(10);
-            float w = Math.Min(maxWidth, padL + dot + gap + Width(g, text, font) + padR);
-            if (w < padL + dot + gap + S(20)) return 0;
-            var r = new RectangleF(x, y, w, h);
-            Fill(g, hue.Tint, r, h / 2);
-            using (var b = new SolidBrush(hue.Base))
-                g.FillEllipse(b, x + padL, y + (h - dot) / 2, dot, dot);
-            Text(g, text, font, hue.Dark, new RectangleF(x + padL + dot + gap, y, w - padL - dot - gap - padR + S(2), h));
-            return w;
+            using (var p = new Pen(c, w)) g.DrawLine(p, x1, y1, x2, y2);
         }
 
-        /// <summary>Highlighter pill behind a key phrase (leaf green, white text). Returns the width used.</summary>
-        public static float Highlight(Graphics g, string text, Font font, float x, float y, float lineHeight)
+        public static void Rect(Graphics g, Color c, float x, float y, float w, float h)
         {
-            float tw = Width(g, text, font);
-            float padX = S(10);
-            var r = new RectangleF(x, y + S(1), tw + padX * 2, lineHeight - S(2));
-            Fill(g, Leaf, r, r.Height / 2);
-            Text(g, text, font, Color.White, r, StringAlignment.Center);
-            return r.Width;
+            using (var b = new SolidBrush(c)) g.FillRectangle(b, x, y, w, h);
         }
 
-        /// <summary>Loose hand-drawn ellipse stroke (sun yellow) around something.</summary>
-        public static void HandCircle(Graphics g, RectangleF r, Color c)
+        public static void Outline(Graphics g, Color c, float width, RectangleF r)
+        {
+            using (var p = new Pen(c, width) { Alignment = PenAlignment.Inset }) g.DrawRectangle(p, r.X, r.Y, r.Width, r.Height);
+        }
+
+        public static void Dotted(Graphics g, Color c, float w, float x1, float y1, float x2, float y2, float dash = 1.5f, float gap = 3f)
+        {
+            using (var p = new Pen(c, w) { DashPattern = new[] { dash / w * Scale, gap / w * Scale } })
+                g.DrawLine(p, x1, y1, x2, y2);
+        }
+
+        /// <summary>A solid square with slightly ragged, photocopied edges.</summary>
+        public static void Toner(Graphics g, Color c, RectangleF r, int seed = 1, float jitter = 0.3f)
         {
             var pts = new List<PointF>();
-            float cx = r.X + r.Width / 2, cy = r.Y + r.Height / 2;
-            for (int i = 0; i <= 26; i++)
-            {
-                double a = -Math.PI * 0.95 + i * (Math.PI * 2.15 / 26);
-                float wob = 1 + 0.04f * (float)Math.Sin(i * 1.7);
-                pts.Add(new PointF(cx + (float)Math.Cos(a) * r.Width / 2 * wob, cy + (float)Math.Sin(a) * r.Height / 2 * wob - i * 0.08f * S(1)));
-            }
-            using (var pen = new Pen(c, S(3)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
-                g.DrawCurve(pen, pts.ToArray(), 0.5f);
+            var rnd = new Random(seed);
+            Func<float> j = () => (float)(rnd.NextDouble() * 2 - 1) * S(jitter);
+            for (int i = 0; i < 8; i++) pts.Add(new PointF(r.X + r.Width * i / 8f, r.Y + j()));
+            for (int i = 0; i < 8; i++) pts.Add(new PointF(r.Right + j(), r.Y + r.Height * i / 8f));
+            for (int i = 0; i < 8; i++) pts.Add(new PointF(r.Right - r.Width * i / 8f, r.Bottom + j()));
+            for (int i = 0; i < 8; i++) pts.Add(new PointF(r.X + j(), r.Bottom - r.Height * i / 8f));
+            using (var b = new SolidBrush(c)) g.FillPolygon(b, pts.ToArray());
         }
 
-        /// <summary>Tilted capsule sticker with one word. Outlined = die-cut look with a hard offset shadow.</summary>
-        public static void Sticker(Graphics g, PointF center, string word, float angle, Color bg, Color fg, bool outlined, float px = 17)
-        {
-            var font = Ui(px, Weight.Semibold);
-            float w = Width(g, word, font) + S(36), h = S(px * 2.1f);
-            var state = g.Save();
-            g.TranslateTransform(center.X, center.Y);
-            g.RotateTransform(angle);
-            var r = new RectangleF(-w / 2, -h / 2, w, h);
-            if (outlined)
-            {
-                var sh = r; sh.Offset(S(4), S(4));
-                Fill(g, Outline, sh, h / 2);
-            }
-            Fill(g, bg, r, h / 2);
-            if (outlined) Stroke(g, Outline, S(2.5f), r, h / 2);
-            Text(g, word, font, fg, r, StringAlignment.Center);
-            g.Restore(state);
-        }
+        // Pixel patterns from the kit (cells of 4-8 px)
+        public static readonly int[,] StairA = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 2, 1 }, { 2, 2 }, { 3, 2 } };
+        public static readonly int[,] StairB = { { 0, 1 }, { 1, 1 }, { 1, 0 }, { 2, 0 }, { 3, 0 }, { 3, 1 } };
+        public static readonly int[,] Cluster = { { 0, 0 }, { 1, 0 }, { 2, 1 }, { 0, 2 }, { 1, 2 }, { 3, 2 }, { 2, 3 }, { 3, 3 }, { 4, 1 } };
+        public static readonly int[,] Step = { { 0, 1 }, { 1, 0 } };
+        public static readonly int[,] Corner = { { 0, 0 }, { 1, 0 }, { 1, 1 } };
+        public static readonly int[,] Diag = { { 0, 0 }, { 1, 1 } };
 
-        public static void Flower(Graphics g, float cx, float cy, float r, Color petals, Color middle, int count = 7)
-        {
-            using (var b = new SolidBrush(petals))
-            {
-                for (int i = 0; i < count; i++)
-                {
-                    double a = i * Math.PI * 2 / count;
-                    float px = cx + (float)Math.Cos(a) * r * 0.55f, py = cy + (float)Math.Sin(a) * r * 0.55f;
-                    g.FillEllipse(b, px - r * 0.45f, py - r * 0.45f, r * 0.9f, r * 0.9f);
-                }
-            }
-            using (var b = new SolidBrush(middle)) g.FillEllipse(b, cx - r * 0.35f, cy - r * 0.35f, r * 0.7f, r * 0.7f);
-        }
-
-        public static void Sparkle(Graphics g, float cx, float cy, float r, Color c)
-        {
-            var pts = new PointF[8];
-            for (int i = 0; i < 8; i++)
-            {
-                double a = i * Math.PI / 4 - Math.PI / 2;
-                float rr = i % 2 == 0 ? r : r * 0.28f;
-                pts[i] = new PointF(cx + (float)Math.Cos(a) * rr, cy + (float)Math.Sin(a) * rr);
-            }
-            using (var b = new SolidBrush(c)) g.FillClosedCurve(b, pts, FillMode.Winding, 0.15f);
-        }
-
-        public static void Starburst(Graphics g, float cx, float cy, float r, Color c, int spikes = 12)
-        {
-            var pts = new PointF[spikes * 2];
-            for (int i = 0; i < pts.Length; i++)
-            {
-                double a = i * Math.PI / spikes;
-                float rr = i % 2 == 0 ? r : r * 0.72f;
-                pts[i] = new PointF(cx + (float)Math.Cos(a) * rr, cy + (float)Math.Sin(a) * rr);
-            }
-            using (var b = new SolidBrush(c)) g.FillPolygon(b, pts);
-        }
-
-        public static void HalfSun(Graphics g, float cx, float cy, float r, Color c, float angle)
+        public static void Pixels(Graphics g, int[,] pattern, Color c, float x, float y, float cell)
         {
             using (var b = new SolidBrush(c))
-                g.FillPie(b, cx - r, cy - r, r * 2, r * 2, angle, 180);
+                for (int i = 0; i < pattern.GetLength(0); i++)
+                    g.FillRectangle(b, x + pattern[i, 0] * cell, y + pattern[i, 1] * cell, cell, cell);
         }
 
-        public static void Clover(Graphics g, float cx, float cy, float r, Color c)
+        /// <summary>Thin plus sign.</summary>
+        public static void Cross(Graphics g, Color c, float cx, float cy, float size, float w = 1f)
         {
-            using (var b = new SolidBrush(c))
+            Line(g, c, S(w), cx - size, cy, cx + size, cy);
+            Line(g, c, S(w), cx, cy - size, cx, cy + size);
+        }
+
+        /// <summary>RGB-split text: red copy shifted left, mint copy shifted right, then the main color (hero words only).</summary>
+        public static void Split(Graphics g, string text, Font font, Color main, float x, float y)
+        {
+            using (var f = Format(StringAlignment.Near, StringAlignment.Near))
+            using (var red = new SolidBrush(Color.FromArgb(199, Red)))
+            using (var mint = new SolidBrush(Color.FromArgb(184, Mint)))
+            using (var soft = new SolidBrush(Color.FromArgb(90, main)))
+            using (var b = new SolidBrush(main))
             {
-                for (int i = 0; i < 4; i++)
-                {
-                    double a = i * Math.PI / 2 + Math.PI / 4;
-                    float px = cx + (float)Math.Cos(a) * r * 0.42f, py = cy + (float)Math.Sin(a) * r * 0.42f;
-                    g.FillEllipse(b, px - r * 0.5f, py - r * 0.5f, r, r);
-                }
+                float d = S(2.5f);
+                g.DrawString(text, font, red, x - d, y, f);
+                g.DrawString(text, font, mint, x + d, y, f);
+                // a hint of the photocopy blur
+                g.DrawString(text, font, soft, x - S(0.4f), y + S(0.3f), f);
+                g.DrawString(text, font, soft, x + S(0.4f), y - S(0.3f), f);
+                g.DrawString(text, font, b, x, y, f);
             }
         }
 
-        /// <summary>Thick round-capped looping ribbon used as background texture.</summary>
-        public static void Ribbon(Graphics g, Color c, float width, params PointF[] pts)
+        /// <summary>"x: 041 y: 366": three-digit, zero padded, like a lab sheet.</summary>
+        public static string Coord(float x, float y)
         {
-            using (var pen = new Pen(c, width) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
-                g.DrawCurve(pen, pts, 0.6f);
+            int ix = Math.Max(0, Math.Min(999, (int)Math.Round(x / Scale)));
+            int iy = Math.Max(0, Math.Min(999, (int)Math.Round(y / Scale)));
+            return "x: " + ix.ToString("000") + " y: " + iy.ToString("000");
         }
 
-        /// <summary>Little search glyph: circle and handle.</summary>
-        public static void SearchGlyph(Graphics g, float x, float y, float size, Color c)
+        /// <summary>Hairline meter: track, 3px ink bar, 7px square marker (or a pink track with a red bar).</summary>
+        public static void Meter(Graphics g, float x, float cy, float w, double fraction, bool redStyle, Color ink)
         {
-            using (var pen = new Pen(c, S(1.8f)) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+            fraction = Math.Max(0, Math.Min(1, fraction));
+            if (redStyle)
             {
-                float d = size * 0.68f;
-                g.DrawEllipse(pen, x, y, d, d);
-                g.DrawLine(pen, x + d * 0.85f, y + d * 0.85f, x + size, y + size);
+                Rect(g, Pink, x, cy - S(3.5f), w, S(7));
+                Rect(g, Red, x, cy - S(3.5f), (float)(w * fraction), S(7));
+                return;
             }
+            Line(g, Color.FromArgb(77, ink), S(1), x, cy, x + w, cy);
+            float fw = (float)(w * fraction);
+            Rect(g, ink, x, cy - S(1), fw, S(3));
+            Rect(g, ink, x + fw - S(3.5f), cy - S(3.5f), S(7), S(7));
         }
 
-        public static void Caret(Graphics g, float cx, float cy, float size, Color c)
-        {
-            using (var pen = new Pen(c, S(1.8f)) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round })
-                g.DrawLines(pen, new[] { new PointF(cx - size, cy - size / 2), new PointF(cx, cy + size / 2), new PointF(cx + size, cy - size / 2) });
-        }
+        // ---------------- Menus ----------------
 
-        /// <summary>Cream context menus with ink text to match the rest of the app.</summary>
-        public sealed class MenuColors : ProfessionalColorTable
+        sealed class MenuRenderer : ToolStripRenderer
         {
-            public override Color ToolStripDropDownBackground { get { return White; } }
-            public override Color ImageMarginGradientBegin { get { return White; } }
-            public override Color ImageMarginGradientMiddle { get { return White; } }
-            public override Color ImageMarginGradientEnd { get { return White; } }
-            public override Color MenuBorder { get { return Sand; } }
-            public override Color MenuItemBorder { get { return HPurple.Tint; } }
-            public override Color MenuItemSelected { get { return HPurple.Tint; } }
-            public override Color MenuItemSelectedGradientBegin { get { return HPurple.Tint; } }
-            public override Color MenuItemSelectedGradientEnd { get { return HPurple.Tint; } }
-            public override Color SeparatorDark { get { return Sand; } }
-            public override Color SeparatorLight { get { return White; } }
-            public override Color CheckBackground { get { return HPurple.Tint; } }
-            public override Color CheckSelectedBackground { get { return HPurple.Tint; } }
-            public override Color CheckPressedBackground { get { return HPurple.Tint; } }
+            protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
+            {
+                using (var b = new SolidBrush(Paper)) e.Graphics.FillRectangle(b, e.AffectedBounds);
+            }
+
+            protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
+            {
+                var r = new Rectangle(0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1);
+                using (var p = new Pen(Ink, S(1.5f))) e.Graphics.DrawRectangle(p, r);
+            }
+
+            protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
+            {
+                if (!e.Item.Selected || !e.Item.Enabled) return;
+                var r = new Rectangle(Si(3), 1, e.Item.Width - Si(6), e.Item.Height - 2);
+                using (var b = new SolidBrush(HoverRow)) e.Graphics.FillRectangle(b, r);
+            }
+
+            protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
+            {
+                var item = e.Item as ToolStripMenuItem;
+                Color c = !e.Item.Enabled ? Grey : item != null && item.Checked ? Red : Ink;
+                float x = Si(28); // room for the red "selected" square
+                if (item != null && item.Checked)
+                    Rect(e.Graphics, Red, Si(12), e.Item.Height / 2f - S(3.5f), S(7), S(7));
+                Theme.Quality(e.Graphics);
+                Text(e.Graphics, Lc(e.Text), e.TextFont, c, new RectangleF(x, 0, e.Item.Width - x - Si(10), e.Item.Height));
+            }
+
+            protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
+            {
+                int y = e.Item.Height / 2;
+                using (var p = new Pen(Hair2)) e.Graphics.DrawLine(p, Si(10), y, e.Item.Width - Si(10), y);
+            }
+
+            protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e) { }
         }
 
         public static ContextMenuStrip Menu()
         {
-            var m = new ContextMenuStrip
+            return new ContextMenuStrip
             {
-                Renderer = new ToolStripProfessionalRenderer(new MenuColors()) { RoundedEdges = true },
-                Font = Ui(14, Weight.Regular),
+                Renderer = new MenuRenderer(),
+                Font = G(14, 500),
                 ShowImageMargin = false,
                 ShowCheckMargin = false,
-                Padding = new Padding(Si(4))
+                Padding = new Padding(Si(2), Si(6), Si(2), Si(6)),
+                DropShadowEnabled = false
             };
-            return m;
         }
 
         public static ToolStripMenuItem MenuItem(string text, EventHandler click)
         {
             return new ToolStripMenuItem(text, null, click)
             {
-                ForeColor = Ink,
-                Padding = new Padding(Si(6), Si(6), Si(6), Si(6))
+                Padding = new Padding(Si(6), Si(5), Si(18), Si(5)),
+                AutoSize = true
             };
         }
     }
