@@ -32,7 +32,15 @@ namespace SpaceSleuth.UI
             var g = e.Graphics;
             g.Clear(Ground);
             Theme.Quality(g);
-            Draw(g);
+            try
+            {
+                Draw(g);
+            }
+            catch (Exception ex)
+            {
+                // Never take the whole app down over one panel's drawing: show what broke, small, and keep going.
+                try { Theme.Text(g, "draw error: " + ex.Message, Theme.M(9), Theme.Red, new RectangleF(4, 4, Width - 8, Theme.S(16))); } catch { }
+            }
             Theme.Grain(g, this, ClientRectangle);
         }
 

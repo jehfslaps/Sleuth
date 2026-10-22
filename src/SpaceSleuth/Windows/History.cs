@@ -107,7 +107,7 @@ namespace SpaceSleuth.Windows
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(path));
-                var lines = new List<string> { "# Space Sleuth scan history. Safe to delete." };
+                var lines = new List<string> { "# Sleuth scan history. Safe to delete." };
                 foreach (var s in scans.OrderBy(s => s.Utc).Skip(Math.Max(0, scans.Count - MaxScans)))
                     lines.Add("scan\t" + s.Drive + "\t" + s.Utc.Ticks.ToString(CultureInfo.InvariantCulture) + "\t" + s.FreeBytes.ToString(CultureInfo.InvariantCulture));
                 foreach (var kv in areas)

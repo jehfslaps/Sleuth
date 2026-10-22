@@ -18,10 +18,16 @@ namespace SpaceSleuth
             Application.Run(new MainForm());
         }
 
+        static DateTime lastError = DateTime.MinValue;
+
         static void ShowError(Exception ex)
         {
+            // one dialog at a time, so a repeating problem can't stack up a pile of them
+            if ((DateTime.UtcNow - lastError).TotalSeconds < 5) return;
+            lastError = DateTime.UtcNow;
             MessageBox.Show("Something went wrong:\n\n" + (ex == null ? "Unknown error" : ex.ToString()),
-                "Space Sleuth", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                "Sleuth", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            lastError = DateTime.UtcNow;
         }
     }
 }

@@ -237,9 +237,26 @@ namespace SpaceSleuth.UI
 
         static Bitmap LoadBitmap(string resource)
         {
+            // GDI+ needs a stream-backed image's stream to stay open for its whole life. Copy it into a
+            // standalone 32-bit bitmap instead, so the stream can be closed safely.
             using (var s = Assembly.GetExecutingAssembly().GetManifestResourceStream(resource))
-                return s == null ? null : new Bitmap(s);
+            {
+                if (s == null) return null;
+                using (var loaded = new Bitmap(s))
+                {
+                    var copy = new Bitmap(loaded.Width, loaded.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+                    using (var g = Graphics.FromImage(copy))
+                    {
+                        g.CompositingMode = CompositingMode.SourceCopy;
+                        g.DrawImage(loaded, 0, 0, loaded.Width, loaded.Height);
+                    }
+                    return copy;
+                }
+            }
         }
+
+        static TextureBrush grainBrushLight, grainBrushDark;
+        static bool grainBroken;
 
         /// <summary>
         /// Fine grain over everything, tiled from the window's corner so it lines up across every panel.
@@ -247,18 +264,26 @@ namespace SpaceSleuth.UI
         /// </summary>
         public static void Grain(Graphics g, Control c, Rectangle area)
         {
-            var tile = GrainTile();
-            if (tile == null) return;
-            Point origin = Point.Empty;
+            if (grainBroken) return;
             try
             {
-                var form = c.FindForm();
-                if (form != null) origin = form.PointToClient(c.PointToScreen(Point.Empty));
-            }
-            catch { }
-            using (var brush = new TextureBrush(tile, WrapMode.Tile))
-            {
+                var tile = GrainTile();
+                if (tile == null) return;
+                TextureBrush brush = Dark ? grainBrushDark : grainBrushLight;
+                if (brush == null)
+                {
+                    brush = new TextureBrush(tile, WrapMode.Tile);
+                    if (Dark) grainBrushDark = brush; else grainBrushLight = brush;
+                }
+                Point origin = Point.Empty;
+                try
+                {
+                    var form = c.FindForm();
+                    if (form != null) origin = form.PointToClient(c.PointToScreen(Point.Empty));
+                }
+                catch { }
                 float s = 0.5f * Scale; // 256 px tile = 128 design px
+                brush.ResetTransform();
                 brush.ScaleTransform(s, s, MatrixOrder.Append);
                 brush.TranslateTransform(-origin.X, -origin.Y, MatrixOrder.Append);
                 var state = g.Save();
@@ -266,6 +291,11 @@ namespace SpaceSleuth.UI
                 g.InterpolationMode = InterpolationMode.NearestNeighbor;
                 g.FillRectangle(brush, area);
                 g.Restore(state);
+            }
+            catch
+            {
+                // Texture is decoration: if this PC's graphics can't draw it, carry on without grain.
+                grainBroken = true;
             }
         }
 

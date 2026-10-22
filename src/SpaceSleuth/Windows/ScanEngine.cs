@@ -68,7 +68,7 @@ namespace SpaceSleuth.Windows
         public const long BigFileBytes = 256L * 1024 * 1024;
 
         /// <summary>
-        /// When Space Sleuth last scanned. With drives given, the earliest last scan among those drives
+        /// When Sleuth last scanned. With drives given, the earliest last scan among those drives
         /// (so nothing is missed on any of them); with null, the most recent scan of any drive.
         /// </summary>
         public static DateTime? LastScanUtc(IEnumerable<string> drives)
