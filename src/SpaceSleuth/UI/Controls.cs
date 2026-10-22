@@ -398,8 +398,10 @@ namespace SpaceSleuth.UI
                     new PointF(x0 + w + Theme.S(40), y0 + h * 0.6f));
 
                 // Two-tone wordmark
-                var big = Theme.Display(Math.Min(44, 28 + w / Theme.S(1) / 70));
-                float tx = panel.X + Theme.S(32), ty = panel.Y + Theme.S(16);
+                // Compact version (no tagline) when the C: banner needs the room
+                bool compact = h < Theme.S(100);
+                var big = Theme.Display(compact ? 34 : Math.Min(44, 28 + w / Theme.S(1) / 70));
+                float tx = panel.X + Theme.S(32), ty = compact ? panel.Y + (h - big.Height * 1.15f) / 2 : panel.Y + Theme.S(16);
                 float spaceW = Theme.Width(g, "SPACE", big);
                 Theme.Text(g, "SPACE", big, Theme.OffWhite, new RectangleF(tx, ty, spaceW + Theme.S(10), big.Height * 1.25f), StringAlignment.Near, StringAlignment.Near);
                 float sleuthW = Theme.Width(g, "SLEUTH", big);
@@ -407,6 +409,7 @@ namespace SpaceSleuth.UI
                 float wordRight = tx + spaceW + Theme.S(12) + sleuthW;
 
                 var tag = Theme.Ui(15, Weight.Medium);
+                if (!compact)
                 Theme.Text(g, "Lost a few gigs? Let’s find out where they went — no stress.", tag, Color.FromArgb(235, Color.White),
                     new RectangleF(tx + Theme.S(2), ty + big.Height * 1.2f, Math.Max(Theme.S(200), wordRight - tx + Theme.S(120)), tag.Height * 1.5f),
                     StringAlignment.Near, StringAlignment.Near);
@@ -423,11 +426,13 @@ namespace SpaceSleuth.UI
                     Theme.Clover(g, panel.Right - Theme.S(40), panel.Bottom - Theme.S(22), Theme.S(18), Theme.Mint);
                     Theme.Sparkle(g, sx + Theme.S(95), panel.Y + Theme.S(18), Theme.S(9), Theme.White);
 
-                    Theme.Sticker(g, new PointF(sx + Theme.S(30), cy + Theme.S(14)), "found it!", -22, Theme.Pink, Theme.HCoral.Dark, false);
-                    Theme.Sticker(g, new PointF(sx + Theme.S(130), cy - Theme.S(18)), "tidy", 18, Theme.Indigo, Theme.Lavender, true);
-                    Theme.Sticker(g, new PointF(sx + Theme.S(210), cy + Theme.S(22)), "breathe", -14, Theme.Forest, Theme.Lime, false);
-                    Theme.Sticker(g, new PointF(sx + Theme.S(255), cy - Theme.S(26)), "space!", 28, Theme.Orange, Theme.Butter, false);
-                    Theme.Sticker(g, new PointF(sx + Theme.S(110), cy + Theme.S(38)), "no stress", 9, Theme.Purple, Color.White, true, 15);
+                    float v = compact ? 0.5f : 1f; // squash the pile vertically in the compact hero
+                    Theme.Sticker(g, new PointF(sx + Theme.S(30), cy + Theme.S(14) * v), "found it!", -22, Theme.Pink, Theme.HCoral.Dark, false);
+                    Theme.Sticker(g, new PointF(sx + Theme.S(130), cy - Theme.S(18) * v), "tidy", 18, Theme.Indigo, Theme.Lavender, true);
+                    Theme.Sticker(g, new PointF(sx + Theme.S(210), cy + Theme.S(22) * v), "breathe", -14, Theme.Forest, Theme.Lime, false);
+                    Theme.Sticker(g, new PointF(sx + Theme.S(255), cy - Theme.S(26) * v), "space!", 28, Theme.Orange, Theme.Butter, false);
+                    if (!compact)
+                        Theme.Sticker(g, new PointF(sx + Theme.S(110), cy + Theme.S(38) * v), "no stress", 9, Theme.Purple, Color.White, true, 15);
                 }
                 g.Restore(state);
             }
@@ -444,6 +449,8 @@ namespace SpaceSleuth.UI
         public string Target;
         public readonly List<KeyValuePair<string, Hue>> Chips = new List<KeyValuePair<string, Hue>>();
         public readonly List<string> Notes = new List<string>();
+        /// <summary>True when the C: banner above already shows the main sentence.</summary>
+        public bool HideLine;
 
         Font Big { get { return Theme.Ui(26, Weight.Bold); } }
         Font NoteFont { get { return Theme.Ui(13, Weight.Regular); } }
@@ -454,8 +461,9 @@ namespace SpaceSleuth.UI
         {
             using (var g = CreateGraphics())
             {
-                float h = Theme.S(10) + Theme.S(42);
+                float h = HideLine ? Theme.S(2) : Theme.S(10) + Theme.S(42);
                 if (Chips.Count > 0) h += Theme.S(34);
+                if (HideLine && Chips.Count == 0 && Notes.Count == 0) return 0;
                 if (Notes.Count > 0) h += NotesHeight(g, width) + Theme.S(10);
                 return (int)Math.Ceiling(h + Theme.S(6));
             }
@@ -475,7 +483,11 @@ namespace SpaceSleuth.UI
             var big = Big;
             float maxRight = Width - Pad;
 
-            if (Amount != null && Target != null)
+            if (HideLine)
+            {
+                y = Theme.S(2) - lineH - Theme.S(4);
+            }
+            else if (Amount != null && Target != null)
             {
                 float lw = Theme.Width(g, Lead, big);
                 Theme.Text(g, Lead, big, Theme.Ink, new RectangleF(x, y, lw + Theme.S(4), lineH));

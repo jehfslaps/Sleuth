@@ -84,6 +84,22 @@ namespace SpaceSleuth.Windows
             return earliest;
         }
 
+        /// <summary>Free space on a drive at the last finished scan, if there was one.</summary>
+        public static bool TryLastScan(string drive, out long freeBytes, out DateTime utc)
+        {
+            var last = History.Load().LastScan(drive);
+            freeBytes = last != null ? last.FreeBytes : 0;
+            utc = last != null ? last.Utc : DateTime.MinValue;
+            return last != null;
+        }
+
+        /// <summary>Free space on a drive right now.</summary>
+        public static long FreeNow(string drive)
+        {
+            long free, total;
+            return Native.FreeSpace(drive + "\\", out free, out total) ? free : 0;
+        }
+
         public static List<DriveChoice> AvailableDrives()
         {
             var list = new List<DriveChoice>();

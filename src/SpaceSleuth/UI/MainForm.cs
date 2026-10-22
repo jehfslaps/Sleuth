@@ -41,6 +41,7 @@ namespace SpaceSleuth.UI
         readonly PillButton findButton = new PillButton(FindText, PillKind.Primary);
         readonly SearchBox filter = new SearchBox("Filter results…");
         readonly HeadlinePanel headline = new HeadlinePanel();
+        readonly DriveBanner banner = new DriveBanner();
         readonly ResultList results = new ResultList();
         readonly DetailPanel detail = new DetailPanel();
         readonly StatusBar status = new StatusBar();
@@ -83,7 +84,7 @@ namespace SpaceSleuth.UI
             tips.SetToolTip(thorough, "Also checks the dates on every file, not just Windows' change log.\nSlower, but catches anything the change log has already forgotten.");
             tips.SetToolTip(drivePicker, "Which drive to look at");
 
-            Controls.AddRange(new Control[] { hero, toolbar, headline, results, detail, status });
+            Controls.AddRange(new Control[] { hero, toolbar, banner, headline, results, detail, status });
 
             BuildDriveMenu();
             BuildItemMenu();
@@ -94,7 +95,7 @@ namespace SpaceSleuth.UI
             status.Status = Native.IsElevated() ? "Ready when you are." : "Not running as administrator — you'll only see part of the picture.";
             headline.Plain = "Where did your space go?";
 
-            animated.AddRange(new IAnimated[] { windowPicker, status, results, detail, detail.Files });
+            animated.AddRange(new IAnimated[] { windowPicker, status, banner, results, detail, detail.Files });
             frame.Tick += (s, e) =>
             {
                 if (WindowState == FormWindowState.Minimized) return;
@@ -114,6 +115,8 @@ namespace SpaceSleuth.UI
                 {
                     status.Busy = true;
                     SetHeadline("Looking around your drives\u2026", null, null);
+                    banner.WasFree = 245L << 30; banner.WasUtc = DateTime.UtcNow.AddDays(-3); banner.NowFree = 237L << 30;
+                    banner.State = DriveBanner.Mode.Scanning; headline.HideLine = true;
                     results.State = ListMood.Scanning;
                     results.MoodTitle = "Looking around\u2026";
                     results.MoodText = "C: reading change journal... 412,300 records";
@@ -161,7 +164,8 @@ namespace SpaceSleuth.UI
             if (toolbar == null) return;
             int W = ClientSize.Width, H = ClientSize.Height;
             int y = 0;
-            hero.SetBounds(0, y, W, Theme.Si(128));
+            bool bigBanner = banner.State == DriveBanner.Mode.Result || banner.State == DriveBanner.Mode.Scanning;
+            hero.SetBounds(0, y, W, Theme.Si(bigBanner ? 92 : 128));
             y = hero.Bottom + Theme.Si(14);
 
             // Toolbar: wraps onto a second row if the window is narrow
@@ -187,6 +191,11 @@ namespace SpaceSleuth.UI
             else place(filter, Theme.Si(240));
             toolbar.SetBounds(0, y, W, ty + rowH + Theme.Si(2));
             y = toolbar.Bottom + Theme.Si(10);
+
+            int bh = banner.Measure(W);
+            banner.SetBounds(0, y, W, bh);
+            banner.Visible = bh > 0;
+            if (bh > 0) y = banner.Bottom + Theme.Si(4);
 
             int hh = headline.Measure(W);
             headline.SetBounds(0, y, W, hh);
@@ -339,6 +348,7 @@ namespace SpaceSleuth.UI
             status.Busy = true;
 
             SetHeadline("Looking around your drives…", null, null);
+            ShowScanningBanner(opt.Drives);
             results.Clear();
             results.State = ListMood.Scanning;
             results.MoodTitle = "Looking around…";
@@ -359,6 +369,8 @@ namespace SpaceSleuth.UI
             catch (OperationCanceledException)
             {
                 SetHeadline("Okay — stopped.", null, null);
+                banner.State = DriveBanner.Mode.Hidden;
+                headline.HideLine = false;
                 results.State = ListMood.Stopped;
                 results.MoodTitle = "Okay — stopped.";
                 results.MoodText = "Run it again whenever you like.";
@@ -368,6 +380,8 @@ namespace SpaceSleuth.UI
             catch (Exception ex)
             {
                 SetHeadline("Hmm, something got in the way.", null, null);
+                banner.State = DriveBanner.Mode.Hidden;
+                headline.HideLine = false;
                 results.State = ListMood.Error;
                 results.MoodTitle = "Hmm, something got in the way.";
                 results.MoodText = ex.Message;
@@ -421,6 +435,114 @@ namespace SpaceSleuth.UI
             return cut >= 0 && cut < p.Length - 1 ? p.Substring(cut + 1) : path;
         }
 
+        const string MainDrive = "C:";
+
+        void ShowScanningBanner(IList<string> scanned)
+        {
+            if (!scanned.Any(d => string.Equals(d, MainDrive, StringComparison.OrdinalIgnoreCase)))
+            {
+                banner.State = DriveBanner.Mode.Hidden;
+                headline.HideLine = false;
+                return;
+            }
+            long was; DateTime when;
+            bool known = false;
+            try { known = ScanEngine.TryLastScan(MainDrive, out was, out when); }
+            catch { was = 0; when = DateTime.MinValue; }
+            banner.Drive = MainDrive;
+            banner.WasFree = known ? was : (long?)null;
+            banner.WasUtc = known ? when : (DateTime?)null;
+            try { banner.NowFree = ScanEngine.FreeNow(MainDrive); } catch { }
+            banner.State = DriveBanner.Mode.Scanning;
+            banner.Invalidate();
+            headline.HideLine = true;
+        }
+
+        static bool OnDrive(Culprit c, string drive)
+        {
+            if (c.Kind == CulpritKind.SystemArea) return c.Path.StartsWith(drive + " ", StringComparison.OrdinalIgnoreCase);
+            if (c.Kind == CulpritKind.Folder) return c.Path.StartsWith(drive + "\\", StringComparison.OrdinalIgnoreCase);
+            return false;
+        }
+
+        static long BytesOf(Culprit c)
+        {
+            return c.AddedBytes > 0 ? c.AddedBytes : c.EstimateBytes;
+        }
+
+        static string ShortName(Culprit c)
+        {
+            if (c.Kind == CulpritKind.Folder) return LastSegment(c.Path);
+            if (c.Kind == CulpritKind.SystemArea && c.Label.StartsWith("System Restore")) return "Restore points";
+            return c.Label;
+        }
+
+        /// <summary>C: was X free at your last scan, now Y: fills the banner and splits the drop into where it went.</summary>
+        void FillBanner(ScanResult r)
+        {
+            var rep = r.Drives.FirstOrDefault(d => string.Equals(d.Drive, MainDrive, StringComparison.OrdinalIgnoreCase));
+            banner.Slices.Clear();
+            banner.NotFound = 0;
+            banner.Footnote = null;
+            banner.Amount = banner.Target = banner.Sentence = null;
+            if (rep == null)
+            {
+                banner.State = DriveBanner.Mode.Hidden;
+                headline.HideLine = false;
+                return;
+            }
+
+            banner.Drive = MainDrive;
+            banner.NowFree = rep.FreeBytes;
+            banner.WasFree = rep.PrevFreeBytes;
+            banner.WasUtc = rep.PrevScanUtc;
+            banner.State = rep.PrevFreeBytes.HasValue ? DriveBanner.Mode.Result : DriveBanner.Mode.FirstLook;
+            headline.HideLine = true;
+            if (!rep.PrevFreeBytes.HasValue) return;
+
+            long drop = rep.PrevFreeBytes.Value - rep.FreeBytes;
+            var onC = r.Culprits.Where(c => c.Kind != CulpritKind.Scattered && OnDrive(c, MainDrive) && BytesOf(c) > 0)
+                                .OrderByDescending(BytesOf).ToList();
+            long scatteredOnC = r.Culprits.Where(c => c.Kind == CulpritKind.Scattered)
+                                .SelectMany(c => c.Files)
+                                .Where(f => f.Path.StartsWith(MainDrive + "\\", StringComparison.OrdinalIgnoreCase))
+                                .Sum(f => f.AddedBytes);
+            long found = onC.Sum(BytesOf) + scatteredOnC;
+
+            if (drop <= 0)
+            {
+                if (found >= 1024L * 1024 * 1024)
+                    banner.Footnote = "Still, " + Format.Bytes(found) + " of new data showed up on " + MainDrive + " \u2014 it's in the list below. Something else must have freed up even more.";
+                return;
+            }
+
+            // Most likely place for the C: drop
+            var top = onC.FirstOrDefault();
+            if (top != null)
+            {
+                banner.Amount = (top.AddedBytes > 0 ? "" : "~") + Format.Bytes(BytesOf(top));
+                banner.Target = top.Kind == CulpritKind.SystemArea && top.EstimateBytes > 0 && top.AddedBytes == 0 ? "a new restore point" : ShortName(top);
+            }
+            else
+            {
+                banner.Sentence = "Couldn't trace this one to specific files yet.";
+            }
+
+            foreach (var c in onC.Take(3))
+                banner.Slices.Add(new DriveBanner.Slice { Name = ShortName(c), Bytes = BytesOf(c), Hue = Theme.For(c), Estimate = c.AddedBytes == 0 });
+            long rest = found - banner.Slices.Sum(x => x.Bytes);
+            if (rest > 0) banner.Slices.Add(new DriveBanner.Slice { Name = "Everything else", Bytes = rest, Hue = Theme.HNeutral });
+            banner.NotFound = Math.Max(0, drop - found);
+
+            bool partialWindow = windowPicker.SelectedIndex != 0 && rep.PrevScanUtc.HasValue && rep.PrevScanUtc.Value < r.CutoffUtc;
+            if (partialWindow)
+                banner.Footnote = "You're only looking " + windowPhrase + ". Pick \u201cSince last scan\u201d to cover the whole drop.";
+            else if (found > drop + drop / 10)
+                banner.Footnote = "Found " + Format.Bytes(found) + " of new data \u2014 more than the drop, because some space was also freed up in the same time (deleted files, cleanup).";
+            else if (banner.NotFound > Math.Max(512L * 1024 * 1024, drop / 10))
+                banner.Footnote = "\u201cNot found yet\u201d is space that couldn't be traced \u2014 usually temporary files that came and went, or restore points Windows already cleaned up.";
+        }
+
         void ShowResult()
         {
             var r = result;
@@ -438,9 +560,14 @@ namespace SpaceSleuth.UI
             else
                 SetHeadline("Most likely, an existing file grew in " + LastSegment(top.Path) + ".", null, null);
 
-            headline.Chips.Add(new KeyValuePair<string, Hue>(Format.Bytes(r.TotalAdded) + " new " + windowPhrase, Theme.HSky));
+            FillBanner(r);
+            bool bannerShown = banner.State != DriveBanner.Mode.Hidden;
+            // With only C: scanned, the banner already says all of this.
+            if (!bannerShown || r.Drives.Count > 1)
+                headline.Chips.Add(new KeyValuePair<string, Hue>(Format.Bytes(r.TotalAdded) + " new " + windowPhrase, Theme.HSky));
             foreach (var d in r.Drives)
             {
+                if (bannerShown && string.Equals(d.Drive, MainDrive, StringComparison.OrdinalIgnoreCase)) continue;
                 headline.Chips.Add(new KeyValuePair<string, Hue>(d.Drive + " has " + Format.Bytes(d.FreeBytes) + " free", Theme.HMint));
                 if (d.PrevFreeBytes.HasValue && d.PrevScanUtc.HasValue)
                 {
@@ -451,7 +578,7 @@ namespace SpaceSleuth.UI
                 }
             }
             foreach (var d in r.Drives) if (!string.IsNullOrEmpty(d.Note)) headline.Notes.Add(d.Note);
-            headline.Notes.AddRange(r.Notes);
+            headline.Notes.AddRange(r.Notes.Where(n => !(bannerShown && n.StartsWith("Free space on " + MainDrive))));
             if (r.Drives.All(d => !d.PrevScanUtc.HasValue))
                 headline.Notes.Add("First look done. Next time, you'll also see exactly how much restore points, the page file and big existing files grew.");
 
