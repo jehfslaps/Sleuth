@@ -114,9 +114,15 @@ namespace SpaceSleuth.Windows
             return info;
         }
 
-        public static List<SystemArea> Collect(string drive, bool isSystemDrive, DateTime cutoffUtc, History history,
+        // The start of the time window: earlier sizes are looked up from there (single scan at a time).
+        static DateTime baselineCutoff = DateTime.UtcNow;
+        static TimeSpan baselineWindow = TimeSpan.FromHours(48);
+
+        public static List<SystemArea> Collect(string drive, bool isSystemDrive, DateTime cutoffUtc, TimeSpan window, History history,
                                                ShadowInfo shadows, ICollection<string> touchedAreaFiles)
         {
+            baselineCutoff = cutoffUtc;
+            baselineWindow = window;
             var list = new List<SystemArea>();
             string root = drive + "\\";
 
@@ -213,7 +219,7 @@ namespace SpaceSleuth.Windows
                 OpenTarget = open, Activity = activity, ActiveInWindow = active
             };
             long prev; DateTime prevUtc;
-            if (history != null && history.TryGetArea(drive, key, out prev, out prevUtc))
+            if (history != null && history.TryGetAreaAt(drive, key, baselineCutoff, baselineWindow, DateTime.UtcNow, out prev, out prevUtc))
             {
                 a.PreviousBytes = prev;
                 a.PreviousUtc = prevUtc;

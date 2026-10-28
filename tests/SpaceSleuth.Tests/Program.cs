@@ -41,6 +41,7 @@ static class Tests
         UnknownGrowthScenario();
         SystemAreaScenario();
         NoiseScenario();
+        BaselineChecks();
         LabelerChecks();
         FormatChecks();
         Console.WriteLine(failures == 0 ? "All tests passed." : failures + " test(s) failed.");
@@ -172,6 +173,29 @@ static class Tests
         Check(r.Any(c => c.Path == @"C:\Program Files\CoolSynth"), "the 100 MB install is still listed further down");
         Check(!r.Any(c => c.Path == @"C:\Users\me\AppData\Local"), "AppData\\Local is not reported as one big culprit");
         Check(r.Last().Kind == CulpritKind.Scattered && r.Last().AddedBytes >= 240 * MB, "the 80 small app logs end up in 'small changes'");
+    }
+
+    static void BaselineChecks()
+    {
+        Console.WriteLine("Look-back windows: which free-space reading counts as \"was\"");
+        // readings Sleuth saved when it ran: 6, 5, 3 and 1 day(s) ago, and 1 minute ago (today's open)
+        var readings = new[] { -6.0, -5.0, -3.0, -1.0, -0.0007 }.Select(d => Now.AddDays(d)).ToList();
+        Func<TimeSpan, DateTime> pick = w =>
+        {
+            object found = SpaceSleuth.Windows.History.PickBaseline(readings.Select(x => (object)x), r => (DateTime)r, Now - w, w, Now);
+            return found == null ? DateTime.MinValue : (DateTime)found;
+        };
+        Func<DateTime, double> daysAgo = t => Math.Round((Now - t).TotalDays, 2);
+        Check(daysAgo(pick(TimeSpan.FromDays(3))) == 3, "3d window starts at the reading from 3 days ago");
+        Check(daysAgo(pick(TimeSpan.FromDays(1))) == 1, "24h window starts at yesterday's reading");
+        Check(daysAgo(pick(TimeSpan.FromDays(7))) == 6, "7d window starts at the oldest reading (6 days ago) when nothing is older");
+        var last = readings[readings.Count - 1];
+        var sinceLast = Now - last + TimeSpan.FromMinutes(5);
+        Check(pick(sinceLast) == last, "\"since last scan\" starts at the last scan");
+        var sparse = new List<DateTime> { Now.AddDays(-1), Now.AddMinutes(-1) };
+        var six = TimeSpan.FromHours(6);
+        var p6 = SpaceSleuth.Windows.History.PickBaseline(sparse.Select(x => (object)x), o => (DateTime)o, Now - six, six, Now);
+        Check(p6 != null && daysAgo((DateTime)p6) == 1, "6h window with no reading near its start falls back to the closest earlier one (not the one from a minute ago)");
     }
 
     static void LabelerChecks()

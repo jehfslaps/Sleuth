@@ -123,6 +123,7 @@ namespace SpaceSleuth.UI
             Shown += (s, e) =>
             {
                 frame.Start();
+                ready = true;
 #if PREVIEW
                 if (Environment.GetEnvironmentVariable("PREVIEW_DARK") == "1") Theme.SetDark(true);
                 if (Environment.GetEnvironmentVariable("PREVIEW_STATE") == "scan")
@@ -298,7 +299,13 @@ namespace SpaceSleuth.UI
         {
             findButton.Click += (s, e) => StartScan();
             filter.Box.TextChanged += (s, e) => FillResults(false);
-            tabs.SelectedIndexChanged += (s, e) => ChooseDrive(tabs.SelectedIndex > 0 && tabs.SelectedIndex - 1 < drives.Count ? drives[tabs.SelectedIndex - 1] : null);
+            tabs.SelectedIndexChanged += (s, e) =>
+            {
+                ChooseDrive(tabs.SelectedIndex > 0 && tabs.SelectedIndex - 1 < drives.Count ? drives[tabs.SelectedIndex - 1] : null);
+                RescanSoon();
+            };
+            // picking a look-back window (or a drive) looks again straight away
+            windowPicker.SelectedIndexChanged += (s, e) => RescanSoon();
             header.ThemePicked += (s, dark) => { Theme.SetDark(dark); SaveThemeSetting(); };
 
             results.SelectionChanged += (s, e) => ShowDetails();
@@ -320,6 +327,14 @@ namespace SpaceSleuth.UI
 #if PREVIEW
             drives.Clear(); tabs.Items.Clear(); tabs.Items.Add("all drives"); tabs.Items.Add("c:"); tabs.Items.Add("d:");
 #endif
+        }
+
+        bool ready;
+
+        void RescanSoon()
+        {
+            if (!ready || cts != null) return;
+            BeginInvoke((Action)StartScan);
         }
 
         void ChooseDrive(DriveChoice d)
@@ -403,7 +418,7 @@ namespace SpaceSleuth.UI
 
             SetHeadline("looking around your drives…", null, null);
             headline.Caption = "fig. 02 / scanning — " + windowPhrase;
-            ShowScanningData(opt.Drives);
+            ShowScanningData(opt.Drives, DateTime.UtcNow - window, window);
             results.Clear();
             results.State = ListMood.Scanning;
             results.MoodTitle = "looking.";
@@ -487,13 +502,14 @@ namespace SpaceSleuth.UI
             return cut >= 0 && cut < p.Length - 1 ? p.Substring(cut + 1) : path;
         }
 
-        void ShowScanningData(IList<string> scanned)
+        void ShowScanningData(IList<string> scanned, DateTime cutoffUtc, TimeSpan window)
         {
             data.Slices.Clear();
             data.NotFound = 0;
             data.Footnote = null;
             data.Method = null;
-            data.WindowText = windowPhrase.StartsWith("since") ? "since last scan" : windowPhrase.Replace("in the ", "");
+            data.WindowText = WindowLabel();
+            data.EarliestUtc = null;
             if (!scanned.Any(d => string.Equals(d, MainDrive, StringComparison.OrdinalIgnoreCase)))
             {
                 data.State = DataColumn.Mode.NoDrive;
@@ -502,7 +518,7 @@ namespace SpaceSleuth.UI
             }
             long was; DateTime when;
             bool known = false;
-            try { known = ScanEngine.TryLastScan(MainDrive, out was, out when); }
+            try { known = ScanEngine.TryBaseline(MainDrive, cutoffUtc, window, out was, out when); }
             catch { was = 0; when = DateTime.MinValue; }
             data.Drive = MainDrive;
             data.WasFree = known ? was : (long?)null;
@@ -512,6 +528,11 @@ namespace SpaceSleuth.UI
             if (choice != null) data.TotalBytes = choice.TotalBytes;
             data.State = DataColumn.Mode.Scanning;
             data.Invalidate();
+        }
+
+        string WindowLabel()
+        {
+            return windowPhrase.StartsWith("since") ? "since last scan" : windowPhrase.Replace("in the ", "").Replace(" (no earlier scan yet)", "");
         }
 
         static bool OnDrive(Culprit c, string drive)
@@ -540,7 +561,8 @@ namespace SpaceSleuth.UI
             data.Slices.Clear();
             data.NotFound = 0;
             data.Footnote = null;
-            data.WindowText = windowPhrase.StartsWith("since") ? "since last scan" : windowPhrase.Replace("in the ", "");
+            data.WindowText = WindowLabel();
+            data.EarliestUtc = null;
             if (rep == null)
             {
                 data.State = DataColumn.Mode.NoDrive;
@@ -555,7 +577,10 @@ namespace SpaceSleuth.UI
             data.WasFree = rep.PrevFreeBytes;
             data.WasUtc = rep.PrevScanUtc;
             data.Method = rep.Method;
-            data.State = rep.PrevFreeBytes.HasValue ? DataColumn.Mode.Result : DataColumn.Mode.FirstLook;
+            data.EarliestUtc = rep.EarliestRecordUtc;
+            data.State = rep.PrevFreeBytes.HasValue ? DataColumn.Mode.Result
+                       : rep.EarliestRecordUtc.HasValue ? DataColumn.Mode.NoRecord
+                       : DataColumn.Mode.FirstLook;
             data.Invalidate();
             if (!rep.PrevFreeBytes.HasValue) return;
 
@@ -581,9 +606,15 @@ namespace SpaceSleuth.UI
             if (rest > 0) data.Slices.Add(new DataColumn.Slice { Name = "everything else", Bytes = rest, Color = Theme.Grey });
             data.NotFound = Math.Max(0, drop - found);
 
-            bool partialWindow = windowPicker.SelectedIndex != 0 && rep.PrevScanUtc.HasValue && rep.PrevScanUtc.Value < r.CutoffUtc;
-            if (partialWindow)
-                data.Footnote = "you're only looking " + windowPhrase + ". pick “since last scan” to cover the whole drop.";
+            // "was" comes from the reading closest to the start of the window; say so when it isn't close
+            var slack = TimeSpan.FromTicks(Math.Max(TimeSpan.FromHours(2).Ticks, r.Window.Ticks / 10));
+            bool readingLate = rep.PrevScanUtc.HasValue && rep.PrevScanUtc.Value > r.CutoffUtc + slack;
+            bool readingEarly = rep.PrevScanUtc.HasValue && rep.PrevScanUtc.Value < r.CutoffUtc - slack;
+            if (readingLate)
+                data.Footnote = "sleuth's first free-space reading in this window is from " + Format.When(rep.PrevScanUtc.Value) +
+                                ", so \u201cwas\u201d starts there. it can only compare against times it ran.";
+            else if (readingEarly)
+                data.Footnote = "the closest earlier reading is from " + Format.When(rep.PrevScanUtc.Value) + ", a bit before this window.";
             else if (found > drop + drop / 10)
                 data.Footnote = "found " + Format.Bytes(found) + " of new data — more than the drop, because some space was also freed in the same time (deleted files, cleanup).";
             else if (data.NotFound > Math.Max(512L * 1024 * 1024, drop / 10))
@@ -616,7 +647,7 @@ namespace SpaceSleuth.UI
                 if (d.PrevFreeBytes.HasValue && d.PrevScanUtc.HasValue)
                 {
                     long change = d.FreeBytes - d.PrevFreeBytes.Value;
-                    s += " (" + (change == 0 ? "no change" : Format.SignedBytes(change)) + " since last scan)";
+                    s += " (" + (change == 0 ? "no change" : Format.SignedBytes(change)) + " since " + Format.When(d.PrevScanUtc.Value) + ")";
                 }
                 summary.Add(s);
             }

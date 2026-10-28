@@ -52,7 +52,7 @@ namespace SpaceSleuth.UI
     }
 
     /// <summary>
-    /// fig. 01, the right-hand data column for C:: free space at your last scan vs now, a mint specimen panel
+    /// fig. 01, the right-hand data column for C:: free space at the start of the chosen time window vs now, a mint specimen panel
     /// with the drop drawn as data, meters, a spec list and the legend of where the space went.
     /// </summary>
     internal sealed class DataColumn : Painted, IAnimated
@@ -65,13 +65,15 @@ namespace SpaceSleuth.UI
             public bool Estimate;
         }
 
-        public enum Mode { NoDrive, FirstLook, Scanning, Result }
+        public enum Mode { NoDrive, FirstLook, NoRecord, Scanning, Result }
 
         public Mode State = Mode.NoDrive;
         public string Drive = "C:";
         public long NowFree, TotalBytes;
         public long? WasFree;
         public DateTime? WasUtc;
+        /// <summary>Oldest reading on record, for when nothing reaches back to the start of the window.</summary>
+        public DateTime? EarliestUtc;
         public string WindowText = "since last scan";
         public string Method;
         public readonly List<Slice> Slices = new List<Slice>();
@@ -140,11 +142,15 @@ namespace SpaceSleuth.UI
             }
             else
             {
-                string big = State == Mode.NoDrive ? "no " + d + " here." : State == Mode.FirstLook || !WasFree.HasValue ? "starting point." : Drop < 0 ? "more room." : "no drop.";
+                string big = State == Mode.NoDrive ? "no " + d + " here."
+                           : State == Mode.NoRecord ? "no reading."
+                           : State == Mode.FirstLook || !WasFree.HasValue ? "starting point."
+                           : Drop < 0 ? "more room." : "no drop.";
                 Theme.Text(g, big, Theme.G(22, 550), Theme.OnMint, new RectangleF(sp.X + Theme.S(14), sp.Y, sp.Width - Theme.S(28), sp.Height), StringAlignment.Near, StringAlignment.Center);
                 string small = State == Mode.NoDrive ? "pick all drives or " + d + " to see before → now."
+                             : State == Mode.NoRecord ? "sleuth's earliest " + d + " reading is from " + Theme.Lc(EarliestUtc.HasValue ? Format.When(EarliestUtc.Value) : "later") + ". it can only compare against times it ran."
                              : State == Mode.FirstLook || !WasFree.HasValue ? "saved. next time you'll see exactly what changed."
-                             : "nothing went missing since your last scan.";
+                             : "nothing went missing in this window.";
                 Theme.Text(g, small, Theme.M(9), Theme.OnMint2, new RectangleF(sp.X + Theme.S(14), sp.Y + sp.Height / 2 + Theme.S(18), sp.Width - Theme.S(28), Theme.S(40)),
                     StringAlignment.Near, StringAlignment.Near, false, true);
             }
@@ -174,6 +180,7 @@ namespace SpaceSleuth.UI
                 if (WasFree.HasValue)
                 {
                     Theme.Label(g, "was", Theme.G(15, 500), Theme.Ink, pad, y);
+                    if (WasUtc.HasValue) Theme.Label(g, Theme.Lc(Format.When(WasUtc.Value)), Theme.M(7.5f), Theme.Ink2, mx, y - Theme.S(11));
                     Theme.Meter(g, mx, y, mw, (double)WasFree.Value / TotalBytes, false, Theme.Ink);
                     Theme.LabelRight(g, Theme.Lc(Format.Bytes(WasFree.Value)), Theme.M(11), Theme.Ink2, right, y);
                     y += Theme.S(28);
@@ -205,7 +212,7 @@ namespace SpaceSleuth.UI
                     rows.Add(Kv("found", Format.Bytes(Found)));
                     rows.Add(Kv("not found yet", Format.Bytes(NotFound)));
                 }
-                rows.Add(Kv("last scan", WasUtc.HasValue ? Format.When(WasUtc.Value) : "—"));
+                rows.Add(Kv("\u201cwas\u201d measured", WasUtc.HasValue ? Format.When(WasUtc.Value) : "—"));
             }
             if (!string.IsNullOrEmpty(Method)) rows.Add(Kv("read by", Method));
             if (rows.Count > 0 && room())

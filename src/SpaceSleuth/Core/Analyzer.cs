@@ -220,7 +220,7 @@ namespace SpaceSleuth.Core
                 c.AddedBytes = a.Delta.Value;
                 c.Score = a.Delta.Value;
                 c.Confidence = "High";
-                c.Note = "Grew since your last scan" + activity;
+                c.Note = (a.PreviousUtc.HasValue ? "Grew since " + Format.When(a.PreviousUtc.Value) : "Grew since your last scan") + activity;
             }
             else if (a.Delta.HasValue)
             {

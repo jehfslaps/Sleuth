@@ -51,10 +51,12 @@ namespace SpaceSleuth.Windows
 
         readonly string path;
         readonly List<ScanRecord> scans = new List<ScanRecord>();
-        readonly Dictionary<string, SizeRecord> areas = new Dictionary<string, SizeRecord>(StringComparer.OrdinalIgnoreCase);
+        // every reading of every system area over time, so "3 days ago" can be looked up
+        readonly Dictionary<string, List<SizeRecord>> areas = new Dictionary<string, List<SizeRecord>>(StringComparer.OrdinalIgnoreCase);
         readonly Dictionary<string, SizeRecord> big = new Dictionary<string, SizeRecord>(StringComparer.OrdinalIgnoreCase);
 
-        const int MaxScans = 500;
+        const int MaxScans = 2000;
+        const int MaxAreaReadings = 400;
         const int MaxBigFiles = 50000;
 
         History(string path)
@@ -85,7 +87,7 @@ namespace SpaceSleuth.Windows
                         if (p[0] == "scan" && p.Length >= 4)
                             h.scans.Add(new ScanRecord { Drive = p[1], Utc = Ticks(p[2]), FreeBytes = Long(p[3]) });
                         else if (p[0] == "area" && p.Length >= 4)
-                            h.areas[p[1]] = new SizeRecord { Bytes = Long(p[2]), Utc = Ticks(p[3]) };
+                            h.AreaList(p[1]).Add(new SizeRecord { Bytes = Long(p[2]), Utc = Ticks(p[3]) });
                         else if (p[0] == "big" && p.Length >= 4)
                             h.big[p[1]] = new SizeRecord { Bytes = Long(p[2]), Utc = Ticks(p[3]) };
                     }
@@ -111,7 +113,8 @@ namespace SpaceSleuth.Windows
                 foreach (var s in scans.OrderBy(s => s.Utc).Skip(Math.Max(0, scans.Count - MaxScans)))
                     lines.Add("scan\t" + s.Drive + "\t" + s.Utc.Ticks.ToString(CultureInfo.InvariantCulture) + "\t" + s.FreeBytes.ToString(CultureInfo.InvariantCulture));
                 foreach (var kv in areas)
-                    lines.Add("area\t" + kv.Key + "\t" + kv.Value.Bytes.ToString(CultureInfo.InvariantCulture) + "\t" + kv.Value.Utc.Ticks.ToString(CultureInfo.InvariantCulture));
+                    foreach (var r in kv.Value.OrderBy(r => r.Utc).Skip(Math.Max(0, kv.Value.Count - MaxAreaReadings)))
+                        lines.Add("area\t" + kv.Key + "\t" + r.Bytes.ToString(CultureInfo.InvariantCulture) + "\t" + r.Utc.Ticks.ToString(CultureInfo.InvariantCulture));
                 foreach (var kv in big.OrderByDescending(kv => kv.Value.Utc).Take(MaxBigFiles))
                     lines.Add("big\t" + kv.Key + "\t" + kv.Value.Bytes.ToString(CultureInfo.InvariantCulture) + "\t" + kv.Value.Utc.Ticks.ToString(CultureInfo.InvariantCulture));
                 string tmp = path + ".tmp";
@@ -141,10 +144,49 @@ namespace SpaceSleuth.Windows
             scans.Add(new ScanRecord { Drive = drive, Utc = utc, FreeBytes = free });
         }
 
-        public bool TryGetArea(string drive, string key, out long bytes, out DateTime utc)
+        List<SizeRecord> AreaList(string key)
         {
-            SizeRecord r;
-            if (areas.TryGetValue(drive + "|" + key, out r))
+            List<SizeRecord> list;
+            if (!areas.TryGetValue(key, out list)) areas[key] = list = new List<SizeRecord>();
+            return list;
+        }
+
+        /// <summary>
+        /// Picks the reading that best marks the START of a time window: the latest one at (or just after) the
+        /// window's start, if it isn't far older than the window; otherwise the earliest one inside the first
+        /// half of the window. Null when nothing that old was ever recorded.
+        /// </summary>
+        public static T PickBaseline<T>(IEnumerable<T> readings, Func<T, DateTime> when, DateTime cutoffUtc, TimeSpan window, DateTime nowUtc) where T : class
+        {
+            var sorted = readings.OrderBy(when).ToList();
+            var edge = cutoffUtc.AddMinutes(10);
+            T before = sorted.LastOrDefault(r => when(r) <= edge);
+            T after = sorted.FirstOrDefault(r => when(r) > edge);
+            var slack = TimeSpan.FromTicks(Math.Max(TimeSpan.FromHours(2).Ticks, window.Ticks / 4));
+            if (before != null && cutoffUtc - when(before) <= slack) return before;
+            if (after != null && when(after) <= cutoffUtc + TimeSpan.FromTicks(window.Ticks / 2)) return after;
+            return before; // older than ideal, but the only thing that reaches back that far
+        }
+
+        /// <summary>Free space on a drive at the start of a time window (see <see cref="PickBaseline{T}"/>).</summary>
+        public ScanRecord BaselineScan(string drive, DateTime cutoffUtc, TimeSpan window, DateTime nowUtc)
+        {
+            return PickBaseline(scans.Where(s => string.Equals(s.Drive, drive, StringComparison.OrdinalIgnoreCase)),
+                                s => s.Utc, cutoffUtc, window, nowUtc);
+        }
+
+        public DateTime? EarliestScanUtc(string drive)
+        {
+            var mine = scans.Where(s => string.Equals(s.Drive, drive, StringComparison.OrdinalIgnoreCase)).ToList();
+            return mine.Count == 0 ? (DateTime?)null : mine.Min(s => s.Utc);
+        }
+
+        /// <summary>A system area's size at the start of a time window.</summary>
+        public bool TryGetAreaAt(string drive, string key, DateTime cutoffUtc, TimeSpan window, DateTime nowUtc, out long bytes, out DateTime utc)
+        {
+            List<SizeRecord> list;
+            SizeRecord r = areas.TryGetValue(drive + "|" + key, out list) ? PickBaseline(list, x => x.Utc, cutoffUtc, window, nowUtc) : null;
+            if (r != null)
             {
                 bytes = r.Bytes; utc = r.Utc;
                 return true;
@@ -155,7 +197,7 @@ namespace SpaceSleuth.Windows
 
         public void SetArea(string drive, string key, long bytes, DateTime utc)
         {
-            areas[drive + "|" + key] = new SizeRecord { Bytes = bytes, Utc = utc };
+            AreaList(drive + "|" + key).Add(new SizeRecord { Bytes = bytes, Utc = utc });
         }
 
         public bool TryGetBig(string filePath, out long bytes, out DateTime utc)

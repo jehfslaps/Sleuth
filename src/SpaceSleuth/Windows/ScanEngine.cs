@@ -39,8 +39,11 @@ namespace SpaceSleuth.Windows
         public string Note;
         public long FreeBytes;
         public long TotalBytes;
+        /// <summary>Free space at the START of the chosen time window (from the scan history), and when it was measured.</summary>
         public long? PrevFreeBytes;
         public DateTime? PrevScanUtc;
+        /// <summary>Oldest free-space reading Sleuth has for this drive (to explain when nothing reaches back far enough).</summary>
+        public DateTime? EarliestRecordUtc;
         public int ChangedFiles;
         public long FoundBytes;
     }
@@ -91,6 +94,15 @@ namespace SpaceSleuth.Windows
             freeBytes = last != null ? last.FreeBytes : 0;
             utc = last != null ? last.Utc : DateTime.MinValue;
             return last != null;
+        }
+
+        /// <summary>Free space on a drive at the start of a time window, from the scan history.</summary>
+        public static bool TryBaseline(string drive, DateTime cutoffUtc, TimeSpan window, out long freeBytes, out DateTime utc)
+        {
+            var b = History.Load().BaselineScan(drive, cutoffUtc, window, DateTime.UtcNow);
+            freeBytes = b != null ? b.FreeBytes : 0;
+            utc = b != null ? b.Utc : DateTime.MinValue;
+            return b != null;
         }
 
         /// <summary>Free space on a drive right now.</summary>
@@ -156,7 +168,7 @@ namespace SpaceSleuth.Windows
             Action<string> report = s => { if (progress != null) progress.Report(s); };
 
             if (res.Elevated) Native.EnablePrivilege("SeBackupPrivilege");
-            else res.Notes.Add("Not running as administrator, so the fast change journal couldn't be used and some folders couldn't be read. Right-click SpaceSleuth.exe > Run as administrator for full results.");
+            else res.Notes.Add("Not running as administrator, so the fast change journal couldn't be used and some folders couldn't be read. Right-click Sleuth > Run as administrator for full results.");
 
             var history = History.Load();
             report("Checking restore points and shadow copies...");
@@ -176,12 +188,14 @@ namespace SpaceSleuth.Windows
                 Native.FreeSpace(root, out free, out total);
                 rep.FreeBytes = free;
                 rep.TotalBytes = total;
-                var last = history.LastScan(drive);
-                if (last != null)
+                // "was": free space at the start of the window (with "since last scan" that is simply the last scan)
+                var baseline = history.BaselineScan(drive, res.CutoffUtc, opt.Window, now);
+                if (baseline != null)
                 {
-                    rep.PrevFreeBytes = last.FreeBytes;
-                    rep.PrevScanUtc = last.Utc;
+                    rep.PrevFreeBytes = baseline.FreeBytes;
+                    rep.PrevScanUtc = baseline.Utc;
                 }
+                rep.EarliestRecordUtc = history.EarliestScanUtc(drive);
 
                 var files = new Dictionary<string, ChangedFile>(StringComparer.OrdinalIgnoreCase);
                 var touchedAreaFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -231,7 +245,7 @@ namespace SpaceSleuth.Windows
                 allFiles.AddRange(files.Values);
 
                 report(drive + " measuring system areas...");
-                var areas = SystemAreas.Collect(drive, drive == systemDrive, res.CutoffUtc, history, shadows, touchedAreaFiles);
+                var areas = SystemAreas.Collect(drive, drive == systemDrive, res.CutoffUtc, opt.Window, history, shadows, touchedAreaFiles);
                 res.Areas.AddRange(areas);
                 res.Drives.Add(rep);
 
@@ -257,9 +271,9 @@ namespace SpaceSleuth.Windows
                 long gap = drop - explained;
                 if (drop > 0 && gap > Math.Max(1024L * 1024 * 1024, drop / 5))
                 {
-                    res.Notes.Add("Free space on " + rep.Drive + " dropped " + Format.Bytes(drop) + " since your last scan (" + Format.When(rep.PrevScanUtc.Value) +
-                                  "), but this scan only accounts for " + Format.Bytes(explained) + ". " +
-                                  (rep.PrevScanUtc.Value < res.CutoffUtc ? "Your last scan was before this time window, so try a longer window. " : "") +
+                    res.Notes.Add("Free space on " + rep.Drive + " dropped " + Format.Bytes(drop) + " since " + Format.When(rep.PrevScanUtc.Value) +
+                                  ", but this scan only accounts for " + Format.Bytes(explained) + ". " +
+                                  (rep.PrevScanUtc.Value < res.CutoffUtc - TimeSpan.FromHours(2) ? "That reading is older than this time window, so try a longer window. " : "") +
                                   "Space can also go to files that were created and deleted again, or to restore points that Windows later cleaned up.");
                 }
             }

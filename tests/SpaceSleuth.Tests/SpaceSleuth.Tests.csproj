@@ -13,6 +13,7 @@
   <ItemGroup>
     <Compile Include="Program.cs" />
     <Compile Include="..\..\src\SpaceSleuth\Core\*.cs" Link="Core\%(Filename)%(Extension)" />
+    <Compile Include="..\..\src\SpaceSleuth\Windows\History.cs" Link="Windows\History.cs" />
   </ItemGroup>
 
 </Project>
