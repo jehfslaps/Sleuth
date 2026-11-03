@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
+using System.Globalization;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -12,15 +13,15 @@ using SpaceSleuth.Core;
 namespace SpaceSleuth.UI
 {
     /// <summary>
-    /// "Glitch Swiss: sound as data" (the MERCY design kit by jehf slaps), applied to Sleuth.
-    /// A clean Swiss layout that has been through a broken photocopier: paper ground, hairlines,
-    /// lowercase grotesk, tiny mono lab labels, flat accent blocks, pixel stairs and grain over everything.
+    /// "Disk investigations": black and white, 1950s case-file minimalism.
+    /// Square corners, hairlines, no shadows, no texture behind data. Emphasis comes from inversion,
+    /// weight and size, never color. Oswald for headlines and numbers, a mono for data, a sans for reading.
     /// </summary>
     internal static class Theme
     {
         // ---------------- Mode ----------------
 
-        public static bool Dark;
+        public static bool Dark = true;
         public static event EventHandler Changed;
 
         public static void SetDark(bool dark)
@@ -30,45 +31,18 @@ namespace SpaceSleuth.UI
             if (Changed != null) Changed(null, EventArgs.Empty);
         }
 
-        /// <summary>Follows Windows' "app mode" (light/dark) unless the user picked one in the app.</summary>
-        public static bool WindowsPrefersDark()
-        {
-            try
-            {
-                using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"))
-                {
-                    object v = k == null ? null : k.GetValue("AppsUseLightTheme");
-                    return v is int && (int)v == 0;
-                }
-            }
-            catch { return false; }
-        }
+        // ---------------- Color tokens (dark / paper) ----------------
 
-        // ---------------- Color tokens (light / dark) ----------------
+        static Color L(string dark, string paper) { return Hex(Dark ? dark : paper); }
 
-        static Color L(string light, string dark) { return Hex(Dark ? dark : light); }
-
-        public static Color Paper { get { return L("#ECEAEB", "#110E12"); } }
-        public static Color Paper2 { get { return L("#E4E1E3", "#18151A"); } }
-        public static Color Side { get { return L("#E4E1E3", "#000000"); } }
-        public static Color Ink { get { return L("#110E12", "#ECEAEB"); } }
-        public static Color Ink2 { get { return Color.FromArgb(Dark ? 209 : 204, Ink); } }
-        public static Color Grey { get { return L("#625D66", "#8F8A92"); } }
-        public static Color Hair { get { return Color.FromArgb(Dark ? 66 : 77, Ink); } }
-        public static Color Hair2 { get { return Color.FromArgb(Dark ? 28 : 33, Ink); } }
-        public static Color Scan { get { return L("#CFCBD0", "#2C2830"); } }
-        public static Color HoverRow { get { return Color.FromArgb(Dark ? 18 : 15, Ink); } }
-        public static Color Blue { get { return L("#2630D1", "#3B46FF"); } }
-        public static Color Violet { get { return L("#2A0F4A", "#6A3CB8"); } }
-
-        // Shared accents
-        public static readonly Color Red = Hex("#E2290F");
-        public static readonly Color Pink = Hex("#DC7F89");
-        public static readonly Color Mint = Hex("#47E4AE");
-        public static readonly Color Yellow = Hex("#E2CC1E");
-        public static readonly Color Orange = Hex("#BF3E23");
-        public static readonly Color OnMint = Hex("#110E12");
-        public static readonly Color OnMint2 = Color.FromArgb(158, Hex("#110E12"));
+        public static Color Bg { get { return L("#000000", "#F4F4F4"); } }
+        public static Color Surface { get { return L("#141414", "#FFFFFF"); } }
+        public static Color Hover { get { return L("#242424", "#E0E0E0"); } }
+        public static Color Fg { get { return L("#FFFFFF", "#000000"); } }
+        public static Color Muted { get { return L("#B8B8B8", "#5C5C5C"); } }
+        public static Color Line { get { return L("#5C5C5C", "#777777"); } }
+        public static Color Subtle { get { return L("#242424", "#E0E0E0"); } }
+        public static Color Disabled { get { return Hex("#777777"); } }
 
         public static Color Hex(string hex)
         {
@@ -76,24 +50,8 @@ namespace SpaceSleuth.UI
             return Color.FromArgb(255, (v >> 16) & 255, (v >> 8) & 255, v & 255);
         }
 
-        /// <summary>One small flat square per kind of place, used everywhere (red is kept for "selected" and alerts).</summary>
-        public static Color For(Category c)
-        {
-            switch (c)
-            {
-                case Category.Libraries: return Blue;
-                case Category.YourFiles: return Mint;
-                case Category.Programs: return Violet;
-                case Category.Games: return Yellow;
-                case Category.Caches: return Scan;
-                default: return Orange;
-            }
-        }
-
-        public static Color For(Culprit c) { return For(Labeler.CategoryOf(c)); }
-
-        /// <summary>Everything is lowercase in this language.</summary>
         public static string Lc(string s) { return s == null ? null : s.ToLowerInvariant(); }
+        public static string Uc(string s) { return s == null ? null : s.ToUpperInvariant(); }
 
         // ---------------- Scale & motion ----------------
 
@@ -133,26 +91,25 @@ namespace SpaceSleuth.UI
         static PrivateFontCollection fonts;
         static readonly Dictionary<string, FontFamily> families = new Dictionary<string, FontFamily>(StringComparer.OrdinalIgnoreCase);
 
+        static readonly string[] FontFiles =
+        {
+            "SLOswald400", "SLOswald500", "SLOswald600",
+            "SLCaseSans", "SLCaseSansMedium", "SLCaseMono", "SLCaseMonoMedium"
+        };
+
         static void LoadFonts()
         {
             if (fonts != null) return;
             fonts = new PrivateFontCollection();
             var asm = Assembly.GetExecutingAssembly();
-            foreach (var name in new[] { "SLArchivo500", "SLArchivo550", "SLArchivo600", "SLArchivo700", "SLMono", "SLMonoBold", "SLUnbounded" })
+            foreach (var name in FontFiles)
             {
                 try
                 {
                     using (var s = asm.GetManifestResourceStream("Sleuth.Fonts." + name + ".ttf"))
                     {
                         if (s == null) continue;
-                        var data = new byte[s.Length];
-                        int read = 0;
-                        while (read < data.Length)
-                        {
-                            int n = s.Read(data, read, data.Length - read);
-                            if (n <= 0) break;
-                            read += n;
-                        }
+                        var data = ReadAll(s);
                         // GDI+ needs the memory to stay alive for the life of the app, so it is never freed.
                         IntPtr mem = Marshal.AllocCoTaskMem(data.Length);
                         Marshal.Copy(data, 0, mem, data.Length);
@@ -170,6 +127,15 @@ namespace SpaceSleuth.UI
                 if (!families.ContainsKey(f.Name) && Usable(f)) families[f.Name] = f;
         }
 
+        static byte[] ReadAll(Stream s)
+        {
+            using (var ms = new MemoryStream())
+            {
+                s.CopyTo(ms);
+                return ms.ToArray();
+            }
+        }
+
         static bool Usable(FontFamily family)
         {
             try
@@ -183,13 +149,18 @@ namespace SpaceSleuth.UI
             }
         }
 
-        static Font Make(string key, string family, string fallback, FontStyle fallbackStyle, float px)
+        static Font Make(string family, string fallback, FontStyle fallbackStyle, float px)
         {
+            string key = family + "|" + px.ToString(CultureInfo.InvariantCulture);
             Font f;
             if (fontCache.TryGetValue(key, out f)) return f;
             LoadFonts();
             FontFamily fam;
             float size = Math.Max(1f, px * Scale);
+#if PREVIEW
+            // the Linux preview can't use private fonts; it has them installed instead
+            if (!families.ContainsKey(family)) { fontCache[key] = f = new Font(family, size, FontStyle.Regular, GraphicsUnit.Pixel); return f; }
+#endif
             f = families.TryGetValue(family, out fam)
                 ? new Font(fam, size, FontStyle.Regular, GraphicsUnit.Pixel)
                 : new Font(fallback, size, fallbackStyle, GraphicsUnit.Pixel);
@@ -197,42 +168,58 @@ namespace SpaceSleuth.UI
             return f;
         }
 
-        /// <summary>Archivo: the words people read and click. Weight 500, 550, 600 or 700.</summary>
-        public static Font G(float px, int weight = 500)
+        /// <summary>Oswald: headlines, big numbers, the primary action. Weight 400, 500 or 600.</summary>
+        public static Font Display(float px, int weight = 500)
         {
-            int w = weight >= 700 ? 700 : weight >= 600 ? 600 : weight >= 550 ? 550 : 500;
-            return Make("g" + px + "_" + w, "SL Archivo " + w, "Segoe UI", w >= 600 ? FontStyle.Bold : FontStyle.Regular, px);
+            int w = weight >= 600 ? 600 : weight >= 500 ? 500 : 400;
+            return Make("SL Oswald " + w, "Bahnschrift", w >= 600 ? FontStyle.Bold : FontStyle.Regular, px);
         }
 
-        /// <summary>JetBrains Mono: numbers, values, labels, coordinates.</summary>
-        public static Font M(float px, bool bold = false)
+        /// <summary>The reading face: names, sentences, buttons.</summary>
+        public static Font Sans(float px, bool medium = false)
         {
-            return Make("m" + px + bold, bold ? "SL Mono Bold" : "SL Mono", "Consolas", bold ? FontStyle.Bold : FontStyle.Regular, px);
+            return Make(medium ? "SL Case Sans Medium" : "SL Case Sans", "Segoe UI", medium ? FontStyle.Bold : FontStyle.Regular, px);
         }
 
-        /// <summary>Unbounded 800: the wordmark and panel titles only.</summary>
-        public static Font W(float px)
+        /// <summary>The typewriter: paths, sizes, labels, dates.</summary>
+        public static Font Mono(float px, bool medium = false)
         {
-            return Make("w" + px, "SL Unbounded", "Segoe UI Black", FontStyle.Regular, px);
+            return Make(medium ? "SL Case Mono Medium" : "SL Case Mono", "Consolas", medium ? FontStyle.Bold : FontStyle.Regular, px);
         }
 
-        // ---------------- Grain ----------------
-
-        static Bitmap grainLight, grainDark;
-
-        static Bitmap GrainTile()
+        public static float Descent(Font f)
         {
-            try
+            var fam = f.FontFamily;
+            return f.Size * fam.GetCellDescent(f.Style) / fam.GetEmHeight(f.Style);
+        }
+
+        /// <summary>Where the baseline falls in a CSS-style line box of the given height starting at top.</summary>
+        public static float BaselineIn(Font f, float top, float lineHeight)
+        {
+            return top + (lineHeight - (Ascent(f) + Descent(f))) / 2 + Ascent(f);
+        }
+
+        /// <summary>Distance from the top of a drawn line to its baseline.</summary>
+        public static float Ascent(Font f)
+        {
+            var fam = f.FontFamily;
+            return f.Size * fam.GetCellAscent(f.Style) / fam.GetEmHeight(f.Style);
+        }
+
+        // ---------------- The detective ----------------
+
+        static Bitmap logo;
+
+        public static Bitmap Logo
+        {
+            get
             {
-                if (Dark)
+                if (logo == null)
                 {
-                    if (grainDark == null) grainDark = LoadBitmap("Sleuth.Textures.grain_dark.png");
-                    return grainDark;
+                    try { logo = LoadBitmap("Sleuth.Art.logo_disc.png"); } catch { }
                 }
-                if (grainLight == null) grainLight = LoadBitmap("Sleuth.Textures.grain_light.png");
-                return grainLight;
+                return logo;
             }
-            catch { return null; }
         }
 
         static Bitmap LoadBitmap(string resource)
@@ -255,51 +242,7 @@ namespace SpaceSleuth.UI
             }
         }
 
-        static TextureBrush grainBrushLight, grainBrushDark;
-        static bool grainBroken;
-
-        /// <summary>
-        /// Fine grain over everything, tiled from the window's corner so it lines up across every panel.
-        /// The tiles already carry their opacity (dark specks in light mode, light specks in dark mode).
-        /// </summary>
-        public static void Grain(Graphics g, Control c, Rectangle area)
-        {
-            if (grainBroken) return;
-            try
-            {
-                var tile = GrainTile();
-                if (tile == null) return;
-                TextureBrush brush = Dark ? grainBrushDark : grainBrushLight;
-                if (brush == null)
-                {
-                    brush = new TextureBrush(tile, WrapMode.Tile);
-                    if (Dark) grainBrushDark = brush; else grainBrushLight = brush;
-                }
-                Point origin = Point.Empty;
-                try
-                {
-                    var form = c.FindForm();
-                    if (form != null) origin = form.PointToClient(c.PointToScreen(Point.Empty));
-                }
-                catch { }
-                float s = 0.5f * Scale; // 256 px tile = 128 design px
-                brush.ResetTransform();
-                brush.ScaleTransform(s, s, MatrixOrder.Append);
-                brush.TranslateTransform(-origin.X, -origin.Y, MatrixOrder.Append);
-                var state = g.Save();
-                g.SmoothingMode = SmoothingMode.None;
-                g.InterpolationMode = InterpolationMode.NearestNeighbor;
-                g.FillRectangle(brush, area);
-                g.Restore(state);
-            }
-            catch
-            {
-                // Texture is decoration: if this PC's graphics can't draw it, carry on without grain.
-                grainBroken = true;
-            }
-        }
-
-        // ---------------- Drawing helpers ----------------
+        // ---------------- Text ----------------
 
         public static void Quality(Graphics g)
         {
@@ -333,7 +276,7 @@ namespace SpaceSleuth.UI
         public static float Label(Graphics g, string text, Font font, Color color, float x, float cy, float maxW = 10000)
         {
             if (string.IsNullOrEmpty(text)) return 0;
-            float w = Math.Min(maxW, Width(g, text, font) + S(2));
+            float w = Math.Min(maxW, Width(g, text, font) + S(1));
             Text(g, text, font, color, new RectangleF(x, cy - font.Height, w, font.Height * 2));
             return w;
         }
@@ -342,16 +285,19 @@ namespace SpaceSleuth.UI
         public static float LabelRight(Graphics g, string text, Font font, Color color, float right, float cy)
         {
             if (string.IsNullOrEmpty(text)) return 0;
-            float w = Width(g, text, font) + S(2);
+            float w = Width(g, text, font) + S(1);
             Text(g, text, font, color, new RectangleF(right - w, cy - font.Height, w, font.Height * 2), StringAlignment.Far);
             return w;
         }
 
-        /// <summary>Right-aligned in its box when it fits, otherwise left-aligned and cut with an ellipsis.</summary>
-        public static void TextRightFit(Graphics g, string text, Font font, Color color, RectangleF r)
+        /// <summary>Text whose baseline sits at y. Returns the width.</summary>
+        public static float OnBaseline(Graphics g, string text, Font font, Color color, float x, float baseline)
         {
-            bool fits = Width(g, text, font) <= r.Width;
-            Text(g, text, font, color, r, fits ? StringAlignment.Far : StringAlignment.Near);
+            if (string.IsNullOrEmpty(text)) return 0;
+            using (var b = new SolidBrush(color))
+            using (var f = Format(StringAlignment.Near, StringAlignment.Near))
+                g.DrawString(text, font, b, x, baseline - Ascent(font), f);
+            return Width(g, text, font);
         }
 
         public static float Width(Graphics g, string text, Font font)
@@ -368,103 +314,204 @@ namespace SpaceSleuth.UI
                 return (float)Math.Ceiling(g.MeasureString(text, font, new SizeF(width, 10000), f).Height);
         }
 
-        public static void Line(Graphics g, Color c, float w, float x1, float y1, float x2, float y2)
+        static readonly Dictionary<string, float> charWidths = new Dictionary<string, float>();
+
+        static float CharWidth(Graphics g, char c, Font font)
         {
-            using (var p = new Pen(c, w)) g.DrawLine(p, x1, y1, x2, y2);
+            string key = font.Name + font.Size + c;
+            float w;
+            if (charWidths.TryGetValue(key, out w)) return w;
+            w = c == ' ' ? Width(g, "a a", font) - Width(g, "aa", font) : Width(g, c.ToString(), font);
+            charWidths[key] = w;
+            return w;
+        }
+
+        /// <summary>Letter-spaced text (GDI+ has no tracking), left edge at x, centred on cy. Returns the width.</summary>
+        public static float Tracked(Graphics g, string text, Font font, Color color, float x, float cy, float tracking)
+        {
+            if (string.IsNullOrEmpty(text)) return 0;
+            float x0 = x, t = S(tracking);
+            using (var b = new SolidBrush(color))
+            using (var f = Format(StringAlignment.Near, StringAlignment.Center))
+                foreach (char c in text)
+                {
+                    if (c != ' ') g.DrawString(c.ToString(), font, b, new RectangleF(x, cy - font.Height, font.Height * 2, font.Height * 2), f);
+                    x += CharWidth(g, c, font) + t;
+                }
+            return x - x0 - t;
+        }
+
+        public static float TrackedWidth(Graphics g, string text, Font font, float tracking)
+        {
+            if (string.IsNullOrEmpty(text)) return 0;
+            float w = 0;
+            foreach (char c in text) w += CharWidth(g, c, font) + S(tracking);
+            return w - S(tracking);
+        }
+
+        /// <summary>The small uppercase mono label ("THE EVIDENCE", "BEFORE / FREE").</summary>
+        public static float Caps(Graphics g, string text, Color color, float x, float cy, float px = 12, float tracking = 1.5f, bool medium = true)
+        {
+            return Tracked(g, Uc(text), Mono(px, medium), color, x, cy, tracking);
+        }
+
+        public static float CapsWidth(Graphics g, string text, float px = 12, float tracking = 1.5f, bool medium = true)
+        {
+            return TrackedWidth(g, Uc(text), Mono(px, medium), tracking);
+        }
+
+        // ---------------- Shapes ----------------
+
+        public static void Rule(Graphics g, Color c, float x1, float y1, float x2, float y2, float w = 1)
+        {
+            using (var p = new Pen(c, S(w))) g.DrawLine(p, x1, y1, x2, y2);
+        }
+
+        /// <summary>A crisp 1px horizontal hairline (snapped to the pixel grid).</summary>
+        public static void HLine(Graphics g, Color c, float x1, float x2, float y)
+        {
+            Rect(g, c, x1, (float)Math.Floor(y), x2 - x1, Math.Max(1, (float)Math.Round(S(1))));
+        }
+
+        public static void VLine(Graphics g, Color c, float x, float y1, float y2)
+        {
+            Rect(g, c, (float)Math.Floor(x), y1, Math.Max(1, (float)Math.Round(S(1))), y2 - y1);
         }
 
         public static void Rect(Graphics g, Color c, float x, float y, float w, float h)
         {
+            if (w <= 0 || h <= 0) return;
+            var old = g.SmoothingMode;
+            g.SmoothingMode = SmoothingMode.None;
             using (var b = new SolidBrush(c)) g.FillRectangle(b, x, y, w, h);
+            g.SmoothingMode = old;
         }
 
-        public static void Outline(Graphics g, Color c, float width, RectangleF r)
+        /// <summary>A square outline drawn inside r.</summary>
+        public static void Box(Graphics g, Color c, RectangleF r, float width = 1)
         {
-            using (var p = new Pen(c, width) { Alignment = PenAlignment.Inset }) g.DrawRectangle(p, r.X, r.Y, r.Width, r.Height);
+            float t = Math.Max(1, (float)Math.Round(S(width)));
+            Rect(g, c, r.X, r.Y, r.Width, t);
+            Rect(g, c, r.X, r.Bottom - t, r.Width, t);
+            Rect(g, c, r.X, r.Y, t, r.Height);
+            Rect(g, c, r.Right - t, r.Y, t, r.Height);
         }
 
-        public static void Dotted(Graphics g, Color c, float w, float x1, float y1, float x2, float y2, float dash = 1.5f, float gap = 3f)
+        /// <summary>Keyboard focus: a 2px ring, 3px outside the control's shape.</summary>
+        public static void Focus(Graphics g, RectangleF r)
         {
-            using (var p = new Pen(c, w) { DashPattern = new[] { dash / w * Scale, gap / w * Scale } })
-                g.DrawLine(p, x1, y1, x2, y2);
+            Box(g, Fg, RectangleF.Inflate(r, S(3) + S(2), S(3) + S(2)), 2);
         }
 
-        /// <summary>A solid square with slightly ragged, photocopied edges.</summary>
-        public static void Toner(Graphics g, Color c, RectangleF r, int seed = 1, float jitter = 0.3f)
+        /// <summary>The magnifying glass: a ring and a short handle at 45 degrees.</summary>
+        public static void Glass(Graphics g, Color c, float x, float y, float size)
         {
-            var pts = new List<PointF>();
-            var rnd = new Random(seed);
-            Func<float> j = () => (float)(rnd.NextDouble() * 2 - 1) * S(jitter);
-            for (int i = 0; i < 8; i++) pts.Add(new PointF(r.X + r.Width * i / 8f, r.Y + j()));
-            for (int i = 0; i < 8; i++) pts.Add(new PointF(r.Right + j(), r.Y + r.Height * i / 8f));
-            for (int i = 0; i < 8; i++) pts.Add(new PointF(r.Right - r.Width * i / 8f, r.Bottom + j()));
-            for (int i = 0; i < 8; i++) pts.Add(new PointF(r.X + j(), r.Bottom - r.Height * i / 8f));
-            using (var b = new SolidBrush(c)) g.FillPolygon(b, pts.ToArray());
-        }
-
-        // Pixel patterns from the kit (cells of 4-8 px)
-        public static readonly int[,] StairA = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 2, 1 }, { 2, 2 }, { 3, 2 } };
-        public static readonly int[,] StairB = { { 0, 1 }, { 1, 1 }, { 1, 0 }, { 2, 0 }, { 3, 0 }, { 3, 1 } };
-        public static readonly int[,] Cluster = { { 0, 0 }, { 1, 0 }, { 2, 1 }, { 0, 2 }, { 1, 2 }, { 3, 2 }, { 2, 3 }, { 3, 3 }, { 4, 1 } };
-        public static readonly int[,] Step = { { 0, 1 }, { 1, 0 } };
-        public static readonly int[,] Corner = { { 0, 0 }, { 1, 0 }, { 1, 1 } };
-        public static readonly int[,] Diag = { { 0, 0 }, { 1, 1 } };
-
-        public static void Pixels(Graphics g, int[,] pattern, Color c, float x, float y, float cell)
-        {
-            using (var b = new SolidBrush(c))
-                for (int i = 0; i < pattern.GetLength(0); i++)
-                    g.FillRectangle(b, x + pattern[i, 0] * cell, y + pattern[i, 1] * cell, cell, cell);
-        }
-
-        /// <summary>Thin plus sign.</summary>
-        public static void Cross(Graphics g, Color c, float cx, float cy, float size, float w = 1f)
-        {
-            Line(g, c, S(w), cx - size, cy, cx + size, cy);
-            Line(g, c, S(w), cx, cy - size, cx, cy + size);
-        }
-
-        /// <summary>RGB-split text: red copy shifted left, mint copy shifted right, then the main color (hero words only).</summary>
-        public static void Split(Graphics g, string text, Font font, Color main, float x, float y)
-        {
-            using (var f = Format(StringAlignment.Near, StringAlignment.Near))
-            using (var red = new SolidBrush(Color.FromArgb(199, Red)))
-            using (var mint = new SolidBrush(Color.FromArgb(184, Mint)))
-            using (var soft = new SolidBrush(Color.FromArgb(90, main)))
-            using (var b = new SolidBrush(main))
+            float ring = size * 0.14f;
+            using (var p = new Pen(c, ring))
             {
-                float d = S(2.5f);
-                g.DrawString(text, font, red, x - d, y, f);
-                g.DrawString(text, font, mint, x + d, y, f);
-                // a hint of the photocopy blur
-                g.DrawString(text, font, soft, x - S(0.4f), y + S(0.3f), f);
-                g.DrawString(text, font, soft, x + S(0.4f), y - S(0.3f), f);
-                g.DrawString(text, font, b, x, y, f);
+                g.DrawEllipse(p, x + ring / 2, y + ring / 2, size - ring, size - ring);
+                p.Width = ring * 1.05f;
+                p.StartCap = p.EndCap = LineCap.Flat;
+                float k = (float)Math.Sqrt(0.5);
+                float cx = x + size / 2, cy = y + size / 2, rr = size / 2;
+                g.DrawLine(p, cx + rr * k * 0.92f, cy + rr * k * 0.92f, cx + rr * k + size * 0.36f, cy + rr * k + size * 0.36f);
             }
         }
 
-        /// <summary>"x: 041 y: 366": three-digit, zero padded, like a lab sheet.</summary>
-        public static string Coord(float x, float y)
+        /// <summary>A rubber stamp: 2px rule, letter-spaced mono, tilted -3 degrees.</summary>
+        public static SizeF Stamp(Graphics g, string text, Color c, float right, float top)
         {
-            int ix = Math.Max(0, Math.Min(999, (int)Math.Round(x / Scale)));
-            int iy = Math.Max(0, Math.Min(999, (int)Math.Round(y / Scale)));
-            return "x: " + ix.ToString("000") + " y: " + iy.ToString("000");
+            var f = Mono(12, true);
+            float tw = TrackedWidth(g, Uc(text), f, 2);
+            float w = tw + S(24) + S(4), h = S(16) + S(14) + S(4);
+            var state = g.Save();
+            g.TranslateTransform(right - w / 2, top + h / 2);
+            g.RotateTransform(-3);
+            var r = new RectangleF(-w / 2, -h / 2, w, h);
+            using (var p = new Pen(c, S(2)) { Alignment = PenAlignment.Inset }) g.DrawRectangle(p, r.X, r.Y, r.Width, r.Height);
+            Tracked(g, Uc(text), f, c, r.X + S(14), 0, 2);
+            g.Restore(state);
+            return new SizeF(w, h);
         }
 
-        /// <summary>Hairline meter: track, 3px ink bar, 7px square marker (or a pink track with a red bar).</summary>
-        public static void Meter(Graphics g, float x, float cy, float w, double fraction, bool redStyle, Color ink)
+        /// <summary>Category swatch: label + pattern, never shade alone.</summary>
+        public static void Pattern(Graphics g, Category cat, RectangleF r)
+        {
+            var old = g.SmoothingMode;
+            g.SmoothingMode = SmoothingMode.None;
+            var state = g.Save();
+            g.SetClip(r);
+            float step = Math.Max(3, (float)Math.Round(S(4))), one = Math.Max(1, (float)Math.Round(S(1)));
+            switch (cat)
+            {
+                case Category.YourFiles: Rect(g, Fg, r.X, r.Y, r.Width, r.Height); break;
+                case Category.Libraries:
+                    using (var p = new Pen(Fg, one))
+                        for (float d = -r.Height; d < r.Width + r.Height; d += step)
+                            g.DrawLine(p, r.X + d, r.Bottom, r.X + d + r.Height, r.Y);
+                    break;
+                case Category.Programs: Rect(g, Muted, r.X, r.Y, r.Width, r.Height); break;
+                case Category.Games:
+                    for (float y = r.Y + step / 2; y < r.Bottom; y += step) Rect(g, Fg, r.X, (float)Math.Floor(y), r.Width, one);
+                    break;
+                case Category.Caches:
+                    for (float y = r.Y + step / 2; y < r.Bottom; y += step)
+                        for (float x = r.X + step / 2; x < r.Right; x += step)
+                            Rect(g, Fg, (float)Math.Floor(x), (float)Math.Floor(y), one, one);
+                    break;
+            }
+            g.Restore(state);
+            Box(g, Fg, r);
+            g.SmoothingMode = old;
+        }
+
+        public static string CategoryWord(Category c)
+        {
+            switch (c)
+            {
+                case Category.YourFiles: return "your files";
+                case Category.Libraries: return "libraries";
+                case Category.Programs: return "programs";
+                case Category.Games: return "games";
+                case Category.Caches: return "caches";
+                default: return "system";
+            }
+        }
+
+        /// <summary>A thin bar: track, then the filled share.</summary>
+        public static void Meter(Graphics g, float x, float y, float w, float h, double fraction, Color track, Color fill)
         {
             fraction = Math.Max(0, Math.Min(1, fraction));
-            if (redStyle)
-            {
-                Rect(g, Pink, x, cy - S(3.5f), w, S(7));
-                Rect(g, Red, x, cy - S(3.5f), (float)(w * fraction), S(7));
-                return;
-            }
-            Line(g, Color.FromArgb(77, ink), S(1), x, cy, x + w, cy);
-            float fw = (float)(w * fraction);
-            Rect(g, ink, x, cy - S(1), fw, S(3));
-            Rect(g, ink, x + fw - S(3.5f), cy - S(3.5f), S(7), S(7));
+            Rect(g, track, x, y, w, h);
+            Rect(g, fill, x, y, (float)(w * fraction), h);
+        }
+
+        // ---------------- Words ----------------
+
+        /// <summary>"27 oct · 10:14 pm"</summary>
+        public static string Day(DateTime utc)
+        {
+            var l = utc.ToLocalTime();
+            return Lc(l.ToString("d MMM", CultureInfo.CurrentCulture) + " · " + l.ToString("h:mm tt", CultureInfo.CurrentCulture));
+        }
+
+        /// <summary>"3 days ago", "5 hours ago", "just now"</summary>
+        public static string Ago(DateTime utc)
+        {
+            var span = DateTime.UtcNow - utc;
+            if (span.TotalMinutes < 1) return "just now";
+            if (span.TotalMinutes < 60) return (int)span.TotalMinutes + " min ago";
+            if (span.TotalHours < 48) { int h = (int)span.TotalHours; return h + (h == 1 ? " hour ago" : " hours ago"); }
+            int d = (int)span.TotalDays;
+            return d + " days ago";
+        }
+
+        /// <summary>Splits "7.2 GB" into "7.2" and "GB".</summary>
+        public static void SplitBytes(string s, out string number, out string unit)
+        {
+            int sp = s == null ? -1 : s.LastIndexOf(' ');
+            if (sp > 0) { number = s.Substring(0, sp); unit = s.Substring(sp + 1); }
+            else { number = s ?? ""; unit = ""; }
         }
 
         // ---------------- Menus ----------------
@@ -473,37 +520,31 @@ namespace SpaceSleuth.UI
         {
             protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
             {
-                using (var b = new SolidBrush(Paper)) e.Graphics.FillRectangle(b, e.AffectedBounds);
+                using (var b = new SolidBrush(Surface)) e.Graphics.FillRectangle(b, e.AffectedBounds);
             }
 
             protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
             {
-                var r = new Rectangle(0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1);
-                using (var p = new Pen(Ink, S(1.5f))) e.Graphics.DrawRectangle(p, r);
+                using (var p = new Pen(Line)) e.Graphics.DrawRectangle(p, 0, 0, e.ToolStrip.Width - 1, e.ToolStrip.Height - 1);
             }
 
             protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
             {
                 if (!e.Item.Selected || !e.Item.Enabled) return;
-                var r = new Rectangle(Si(3), 1, e.Item.Width - Si(6), e.Item.Height - 2);
-                using (var b = new SolidBrush(HoverRow)) e.Graphics.FillRectangle(b, r);
+                using (var b = new SolidBrush(Fg)) e.Graphics.FillRectangle(b, new Rectangle(1, 0, e.Item.Width - 2, e.Item.Height));
             }
 
             protected override void OnRenderItemText(ToolStripItemTextRenderEventArgs e)
             {
-                var item = e.Item as ToolStripMenuItem;
-                Color c = !e.Item.Enabled ? Grey : item != null && item.Checked ? Red : Ink;
-                float x = Si(28); // room for the red "selected" square
-                if (item != null && item.Checked)
-                    Rect(e.Graphics, Red, Si(12), e.Item.Height / 2f - S(3.5f), S(7), S(7));
+                Color c = !e.Item.Enabled ? Disabled : e.Item.Selected ? Bg : Fg;
                 Theme.Quality(e.Graphics);
-                Text(e.Graphics, Lc(e.Text), e.TextFont, c, new RectangleF(x, 0, e.Item.Width - x - Si(10), e.Item.Height));
+                Text(e.Graphics, Lc(e.Text), e.TextFont, c, new RectangleF(Si(14), 0, e.Item.Width - Si(24), e.Item.Height));
             }
 
             protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
             {
                 int y = e.Item.Height / 2;
-                using (var p = new Pen(Hair2)) e.Graphics.DrawLine(p, Si(10), y, e.Item.Width - Si(10), y);
+                using (var p = new Pen(Line)) e.Graphics.DrawLine(p, Si(10), y, e.Item.Width - Si(10), y);
             }
 
             protected override void OnRenderItemCheck(ToolStripItemImageRenderEventArgs e) { }
@@ -514,10 +555,10 @@ namespace SpaceSleuth.UI
             return new ContextMenuStrip
             {
                 Renderer = new MenuRenderer(),
-                Font = G(14, 500),
+                Font = Mono(13),
                 ShowImageMargin = false,
                 ShowCheckMargin = false,
-                Padding = new Padding(Si(2), Si(6), Si(2), Si(6)),
+                Padding = new Padding(0, Si(4), 0, Si(4)),
                 DropShadowEnabled = false
             };
         }
@@ -526,7 +567,7 @@ namespace SpaceSleuth.UI
         {
             return new ToolStripMenuItem(text, null, click)
             {
-                Padding = new Padding(Si(6), Si(5), Si(18), Si(5)),
+                Padding = new Padding(Si(6), Si(6), Si(18), Si(6)),
                 AutoSize = true
             };
         }

@@ -12,15 +12,17 @@ You had 250 GB free this morning and 238 GB now. Sleuth looks at what changed on
 | 4 | <1% | 100 MB | `C:\Program Files\CoolSynth` | Installed program: CoolSynth |
 | | 3% | 1.1 GB | Many small changes in different folders | App updates, caches, logs |
 
-Click any card to see the individual files. Double-click to open it in File Explorer.
+Pick any suspect to open its case file and see the individual files. Double-click to open it in File Explorer.
 
 ![Sleuth preview (sample data)](docs/preview.png)
 
 ## Look & feel
 
-Sleuth uses **Glitch Swiss: sound as data**, the design language from the MERCY drum processor by jehf slaps: a clean Swiss layout that has been through a broken photocopier. Paper ground, hairlines, everything lowercase, tiny mono lab labels (`fig. 01`, `x: 182 y: 242`), flat accent blocks, red pixel stairs, an RGB-split `sleuth.` wordmark and fine grain over everything. Disk space is shown the way MERCY shows sound: the drop on C: is drawn as a waveform specimen on a mint panel.
+Sleuth is a 1950s case file: black and white, Twilight Zone-era minimal. The detective on his white disc sits in the side rail; every scan is a numbered case. The screen reads like a report: **the evidence** (C:'s free space before and now, how it was measured), **the suspects** (ranked by likelihood, the chosen one inverted) and **the case file** (what the selected suspect is, how much it added, when, and its biggest files). While it scans you see the investigation itself: a progress bar, what's being checked and the procedure step by step.
 
-Each kind of place keeps one small square color everywhere: **blue** = libraries & media, **mint** = your files, **violet** = apps & programs, **yellow** = games, **grey** = caches & temp, **orange** = system space. Red only ever means "selected" or "look at this". There's a light and a dark mode (top right); it starts in whichever mode Windows uses.
+Square corners, hairlines, no shadows and no texture behind the data. Emphasis comes from inversion, weight and size, never color. Kinds of places are told apart by pattern, not shade: solid = your files, diagonal = libraries, grey = programs, horizontal lines = games, dots = caches, empty = system. There's a dark mode and a paper mode (top right); it starts dark.
+
+![Sleuth in paper mode](docs/preview-paper.png)
 
 ## Download
 
@@ -37,7 +39,7 @@ The first time, Windows SmartScreen may say *"Windows protected your PC"* becaus
 3. **Finding the culprit folder.** All the new data is added up into a folder tree. A brand-new folder (an install, an unzipped pack, a sample library) is reported as one item. Busy folders like `AppData` or `Downloads` are broken down into the specific things inside them.
 4. **Likelihood** = that item's share of all the new data found. Things we're certain about (new files) count fully. Existing files that were merely modified count only a little, because we don't know their size before.
 5. **System space.** Restore points/shadow copies, the hibernation file, the page file, the swap file, crash dumps and the Recycle Bin are measured separately and listed in their own section.
-6. **Before → now for C:.** The data column on the right (fig. 01) shows how much free space C: had the last time you opened Sleuth, how much it has now, and a waveform specimen plus meters splitting the drop into where it most likely went, plus anything that couldn't be traced ("not found yet"). The time window defaults to **since last scan**, so a week later it covers exactly that week.
+6. **Before → now for C:.** The evidence column shows how much free space C: had at the start of the look-back window (the reading Sleuth took closest to then), how much it has now, how much of the drop was traced and how much wasn't, and what was added by kind. The look-back window defaults to **since last scan**, so a week later it covers exactly that week.
 7. **Memory between scans.** Each scan saves a small history file (`%LOCALAPPDATA%\SpaceSleuth\history.txt`). Next time, the app can say *"free space dropped 11.7 GB since your last scan"* and measure exactly how much restore points and big existing files (game files, virtual disks) grew.
 
 It also recognises common locations: Steam/Epic/Xbox games, Windows Update caches, browser caches, Docker/WSL disks, and music-production content (Kontakt/Native Instruments, Spitfire, Splice, Ableton, FL Studio, Arturia, Spectrasonics, Toontrack, audio plugin folders, and more). Folders hidden from normal view (AppData, ProgramData, the Public folder) are flagged.
@@ -56,4 +58,4 @@ The app targets .NET Framework 4.8, which is built into Windows 11, so the .exe 
 
 ## Credits
 
-Design: the Glitch Swiss design kit by jehf slaps (from MERCY v1.7). Fonts embedded in the app: [Archivo](https://github.com/Omnibus-Type/Archivo), [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) and [Unbounded](https://github.com/googlefonts/unbounded), all under the SIL Open Font License (see `licenses/`); the copies inside the app are trimmed to Latin characters and renamed so they can't clash with fonts you have installed.
+Design: "disk investigations", made with jehf slaps; the detective mark is his. Fonts embedded in the app: [Oswald](https://github.com/googlefonts/OswaldFont) and [IBM Plex](https://github.com/IBM/plex) (Sans and Mono), all under the SIL Open Font License (see `licenses/`). The copies inside the app are trimmed to Latin characters and renamed ("SL Oswald", "SL Case Sans", "SL Case Mono") so they can't clash with fonts you have installed and so the modified Plex copies don't carry its reserved name.

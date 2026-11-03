@@ -32,9 +32,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Glitch Swiss design kit: Archivo, JetBrains Mono, Unbounded (SIL Open Font License, see /licenses) and the grain tiles -->
+    <!-- Oswald and IBM Plex (SIL Open Font License, see /licenses), trimmed and renamed; the detective mark -->
     <EmbeddedResource Include="Assets\fonts\*.ttf" LogicalName="Sleuth.Fonts.%(Filename)%(Extension)" />
-    <EmbeddedResource Include="Assets\textures\*.png" LogicalName="Sleuth.Textures.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Assets\art\*.png" LogicalName="Sleuth.Art.%(Filename)%(Extension)" />
   </ItemGroup>
 
 </Project>

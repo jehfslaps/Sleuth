@@ -42,11 +42,11 @@ CloseApplications=yes
 UsedUserAreasWarning=no
 
 [Messages]
-WelcomeLabel1=sleuth.
-WelcomeLabel2=disk space finder.%n%nshows where your disk space went, ranked from most likely to least likely. it only looks; it never deletes anything.
-FinishedHeadingLabel=done.
-FinishedLabel=sleuth is installed. it's in your start menu.
-FinishedLabelNoIcons=sleuth is installed.
+WelcomeLabel1=Sleuth.
+WelcomeLabel2=Disk investigations.%n%nFinds where your disk space went, with the suspects ranked from most likely to least likely. It only looks; it never deletes anything.
+FinishedHeadingLabel=Case open.
+FinishedLabel=Sleuth is installed. You'll find it in your Start menu.
+FinishedLabelNoIcons=Sleuth is installed.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
